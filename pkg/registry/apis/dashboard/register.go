@@ -38,6 +38,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/provisioning"
+	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/search/sort"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/legacysql"
@@ -175,6 +176,21 @@ func (b *DashboardsAPIBuilder) Validate(ctx context.Context, a admission.Attribu
 			if provisioningData != nil {
 				return apierrors.NewBadRequest(dashboards.ErrDashboardCannotDeleteProvisionedDashboard.Reason)
 			}
+		}
+	}
+
+	// For create, check quota
+	if op == admission.Create && b.quotaService != nil {
+		// Check if dashboard quota has been reached
+		scopeParams := &quota.ScopeParameters{
+			OrgID: nsInfo.OrgID,
+		}
+		quotaReached, err := b.quotaService.CheckQuotaReached(ctx, dashboards.QuotaTargetSrv, scopeParams)
+		if err != nil {
+			return fmt.Errorf("failed to check dashboard quota: %w", err)
+		}
+		if quotaReached {
+			return fmt.Errorf("dashboard quota reached")
 		}
 	}
 

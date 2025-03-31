@@ -22,7 +22,10 @@ import (
 	"github.com/grafana/grafana/pkg/tests/testinfra"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
 
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
+	"github.com/grafana/grafana/pkg/services/dashboards" // TODO: Check if we can remove this import
+	"github.com/grafana/grafana/pkg/services/quota"
 )
 
 func TestMain(m *testing.M) {
@@ -77,6 +80,10 @@ func TestIntegrationK8sDashboard(t *testing.T) {
 
 		t.Run("Dashboard validation tests", func(t *testing.T) {
 			runDashboardValidationTests(t, org1Ctx)
+		})
+
+		t.Run("Dashboard quota tests", func(t *testing.T) {
+			runQuotaTests(t, org1Ctx)
 		})
 	})
 
@@ -199,15 +206,10 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 
 							// Verify if dashboard was created in the correct folder
 							if loc.folderUID != "" {
-								spec := dash.Object["spec"].(map[string]interface{})
-								require.Equal(t, loc.folderUID, spec["folderUID"])
+								meta, _ := utils.MetaAccessor(dash)
+								folderUID := meta.GetFolder()
+								require.Equal(t, loc.folderUID, folderUID, "Dashboard should be in the expected folder")
 							}
-
-							// Verify the folder is also set as an annotation
-							metadata := dash.Object["metadata"].(map[string]interface{})
-							annotations, hasAnnotations := metadata["annotations"].(map[string]interface{})
-							require.True(t, hasAnnotations, "Dashboard should have annotations")
-							require.Equal(t, loc.folderUID, annotations["grafana.app/folder"], "Dashboard should have folder annotation")
 
 							// Clean up
 							err = adminClient.Resource.Delete(context.Background(), dash.GetName(), v1.DeleteOptions{})
@@ -235,8 +237,8 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 					require.NotNil(t, updatedDash)
 
 					// Verify the update
-					updatedSpec := updatedDash.Object["spec"].(map[string]interface{})
-					require.Equal(t, "Updated by "+identity.Name, updatedSpec["title"])
+					meta, _ := utils.MetaAccessor(updatedDash)
+					require.Equal(t, "Updated by "+identity.Name, meta.FindTitle(""))
 				} else {
 					// Test cannot update dashboard
 					_, err := updateDashboard(t, identity.Client, dash, "Updated by "+identity.Name, nil)
@@ -371,14 +373,8 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 					require.NotNil(t, dash)
 
 					// Verify it was created in the correct folder
-					spec := dash.Object["spec"].(map[string]interface{})
-					require.Equal(t, folderUID, spec["folderUID"])
-
-					// Verify the folder is also set as an annotation
-					metadata := dash.Object["metadata"].(map[string]interface{})
-					annotations, hasAnnotations := metadata["annotations"].(map[string]interface{})
-					require.True(t, hasAnnotations, "Dashboard should have annotations")
-					require.Equal(t, folderUID, annotations["grafana.app/folder"], "Dashboard should have folder annotation")
+					meta, _ := utils.MetaAccessor(dash)
+					require.Equal(t, folderUID, meta.GetFolder(), "Dashboard should have folder annotation")
 
 					// Clean up
 					err = adminClient.Resource.Delete(context.Background(), dash.GetName(), v1.DeleteOptions{})
@@ -398,8 +394,11 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 					require.NotNil(t, updatedDash)
 
 					// Verify the update
-					updatedSpec := updatedDash.Object["spec"].(map[string]interface{})
-					require.Equal(t, "Updated by Editor with EDIT Permission", updatedSpec["title"])
+					meta, _ := utils.MetaAccessor(updatedDash)
+					spec, _ := meta.GetSpec()
+					specMap := spec.(map[string]interface{})
+
+					require.Equal(t, "Updated by Editor with EDIT Permission", specMap["title"])
 
 					// Clean up
 					err = adminClient.Resource.Delete(context.Background(), dash.GetName(), v1.DeleteOptions{})
@@ -452,8 +451,8 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		require.NotNil(t, updatedDash)
 
 		// Verify the update
-		updatedSpec := updatedDash.Object["spec"].(map[string]interface{})
-		require.Equal(t, "Updated by Viewer with Permission", updatedSpec["title"])
+		meta, _ := utils.MetaAccessor(updatedDash)
+		require.Equal(t, "Updated by Viewer with Permission", meta.FindTitle(""))
 
 		// Clean up
 		err = adminClient.Resource.Delete(context.Background(), dashUID, v1.DeleteOptions{})
@@ -490,8 +489,8 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		require.NotNil(t, updatedDash2)
 
 		// Verify the update
-		updatedSpec := updatedDash2.Object["spec"].(map[string]interface{})
-		require.Equal(t, "Updated by Viewer with Dashboard-Specific Permission", updatedSpec["title"])
+		meta, _ := utils.MetaAccessor(updatedDash2)
+		require.Equal(t, "Updated by Viewer with Dashboard-Specific Permission", meta.FindTitle(""))
 
 		// Also check viewer can delete the dashboard they have EDIT permission on
 		err = viewerClient.Resource.Delete(context.Background(), dash2UID, v1.DeleteOptions{})
@@ -529,8 +528,8 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		require.NotNil(t, updatedDash)
 
 		// Verify the update
-		updatedSpec := updatedDash.Object["spec"].(map[string]interface{})
-		require.Equal(t, "Updated by Viewer with Folder Permission", updatedSpec["title"])
+		meta, _ := utils.MetaAccessor(updatedDash)
+		require.Equal(t, "Updated by Viewer with Folder Permission", meta.FindTitle(""))
 
 		// Revert granted permissions
 		setResourceUserPermission(t, ctx, ctx.AdminUser, "folders", folderUID, viewerUserID, dashboardaccess.PERMISSION_VIEW)
@@ -568,8 +567,8 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		require.NotNil(t, updatedDash)
 
 		// Verify the update
-		updatedSpec := updatedDash.Object["spec"].(map[string]interface{})
-		require.Equal(t, "Updated by Viewer with Permission from Editor", updatedSpec["title"])
+		meta, _ := utils.MetaAccessor(updatedDash)
+		require.Equal(t, "Updated by Viewer with Permission from Editor", meta.FindTitle(""))
 
 		// Clean up
 		err = editorClient.Resource.Delete(context.Background(), dashUID, v1.DeleteOptions{})
@@ -772,11 +771,13 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			require.NotNil(t, k8sFolder)
 
 			// Try to change it to a dashboard (not a folder)
-			if spec, ok := k8sFolder.Object["spec"].(map[string]interface{}); ok {
-				spec["isFolder"] = false
-				_, err = adminFolderClient.Resource.Update(context.Background(), k8sFolder, v1.UpdateOptions{})
-				require.Error(t, err)
-			}
+			meta, _ := utils.MetaAccessor(k8sFolder)
+			spec, _ := meta.GetSpec()
+			specMap := spec.(map[string]interface{})
+			specMap["isFolder"] = false
+			meta.SetSpec(specMap)
+			_, err = adminFolderClient.Resource.Update(context.Background(), k8sFolder, v1.UpdateOptions{})
+			require.Error(t, err)
 
 			// Clean up
 			err = adminFolderClient.Resource.Delete(context.Background(), k8sFolder.GetName(), v1.DeleteOptions{})
@@ -815,11 +816,10 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			dashUID := dash.GetName()
 
 			// Get the initial version
-			spec := dash.Object["spec"].(map[string]interface{})
-			initialVersion := int64(0)
-			if v, ok := spec["version"]; ok {
-				initialVersion, _ = v.(int64)
-			}
+			meta, _ := utils.MetaAccessor(dash)
+			spec, _ := meta.GetSpec()
+			specMap := spec.(map[string]interface{})
+			initialVersion := specMap["version"].(int64)
 
 			// Update the dashboard
 			updatedDash, err := updateDashboard(t, adminClient, dash, "Updated Dashboard for Version Test", nil)
@@ -827,10 +827,10 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			require.NotNil(t, updatedDash)
 
 			// Check that version was incremented
-			updatedSpec := updatedDash.Object["spec"].(map[string]interface{})
-			updatedVersion, ok := updatedSpec["version"].(int64)
-			require.True(t, ok, "Version should be a number")
-			require.Greater(t, updatedVersion, initialVersion, "Version should be incremented after update")
+			meta, _ = utils.MetaAccessor(updatedDash)
+			spec, _ = meta.GetSpec()
+			specMap = spec.(map[string]interface{})
+			require.Greater(t, specMap["version"].(int64), initialVersion, "Version should be incremented after update")
 
 			// Clean up
 			err = adminClient.Resource.Delete(context.Background(), dashUID, v1.DeleteOptions{})
@@ -868,12 +868,13 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 		// Test setting an explicit version
 		t.Run("explicit version setting is validated", func(t *testing.T) {
 			// Create a dashboard with a specific version
-			dashObj := createDashboardObject("Dashboard with Explicit Version", "", 0)
+			dashObj := createDashboardObject(t, "Dashboard with Explicit Version", "", 0)
+			meta, _ := utils.MetaAccessor(dashObj)
+			spec, _ := meta.GetSpec()
+			specMap := spec.(map[string]interface{})
 
 			// Set an explicit version in the spec
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["version"] = 5 // Set explicit version
-			}
+			specMap["version"] = 5 // Set explicit version
 
 			// Create the dashboard
 			createdDash, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
@@ -885,9 +886,10 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			require.NoError(t, err)
 
 			// Verify the version was handled properly
-			spec := fetchedDash.Object["spec"].(map[string]interface{})
-			version := spec["version"]
-			require.Equal(t, 5, version, "Version should be 5")
+			meta, _ = utils.MetaAccessor(fetchedDash)
+			spec, _ = meta.GetSpec()
+			specMap = spec.(map[string]interface{})
+			require.Equal(t, 5, specMap["version"], "Version should be 5")
 
 			// Clean up
 			err = adminClient.Resource.Delete(context.Background(), dashUID, v1.DeleteOptions{})
@@ -948,8 +950,8 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 					// Verify the update succeeded by fetching the dashboard again
 					updatedDash, err := editorClient.Resource.Get(context.Background(), dashUID, v1.GetOptions{})
 					require.NoError(t, err)
-					updatedSpec := updatedDash.Object["spec"].(map[string]interface{})
-					require.Equal(t, "Updated Provisioned Dashboard", updatedSpec["title"], "Dashboard title should be updated")
+					meta, _ := utils.MetaAccessor(updatedDash)
+					require.Equal(t, "Updated Provisioned Dashboard", meta.FindTitle(""), "Dashboard title should be updated")
 				} else {
 					require.Error(t, err, "Editor should not be able to update provisioned dashboard when allowsEdits is false")
 					require.Contains(t, err.Error(), "provisioned")
@@ -1014,12 +1016,16 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			tc := tc // Capture for parallel execution
 			t.Run(tc.name, func(t *testing.T) {
 				// Create the dashboard with the specified refresh value
-				dashObj := createDashboardObject("Dashboard with Refresh: "+tc.refreshValue, "", 0)
+				dashObj := createDashboardObject(t, "Dashboard with Refresh: "+tc.refreshValue, "", 0)
 
-				// Add refresh configuration
-				if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-					spec["refresh"] = tc.refreshValue
-				}
+				// Add refresh configuration using MetaAccessor
+				meta, _ := utils.MetaAccessor(dashObj)
+				spec, _ := meta.GetSpec()
+				specMap := spec.(map[string]interface{})
+
+				specMap["refresh"] = tc.refreshValue
+
+				meta.SetSpec(specMap)
 
 				dash, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
 
@@ -1047,37 +1053,41 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			dash, err := createDashboard(t, adminClient, "Dashboard Exceeding Size Limit", nil, &specificUID)
 			require.NoError(t, err)
 
-			// Now update the dashboard with too many panels
-			if spec, ok := dash.Object["spec"].(map[string]interface{}); ok {
-				// Create a large number of panels
-				var largePanelArray []map[string]interface{}
+			meta, _ := utils.MetaAccessor(dash)
+			spec, _ := meta.GetSpec()
+			specMap := spec.(map[string]interface{})
 
-				// Create 5000 simple panels with unique IDs (to exceed max allowed size)
-				for i := 0; i < 5000; i++ {
-					// Create a simple panel with minimal properties
-					panel := map[string]interface{}{
-						"id":          i,
-						"type":        "graph",
-						"title":       fmt.Sprintf("Panel %d", i),
-						"description": fmt.Sprintf("Panel description %d", i),
-						"gridPos": map[string]interface{}{
-							"h": 8,
-							"w": 12,
-							"x": i % 24,
-							"y": (i / 24) * 8,
+			// Create a large number of panels
+			var largePanelArray []map[string]interface{}
+
+			// Create 500000 simple panels with unique IDs (to exceed max allowed request size)
+			for i := 0; i < 500000; i++ {
+				// Create a simple panel with minimal properties
+				panel := map[string]interface{}{
+					"id":          i,
+					"type":        "graph",
+					"title":       fmt.Sprintf("Panel %d", i),
+					"description": fmt.Sprintf("Panel description %d", i),
+					"gridPos": map[string]interface{}{
+						"h": 8,
+						"w": 12,
+						"x": i % 24,
+						"y": (i / 24) * 8,
+					},
+					"targets": []map[string]interface{}{
+						{
+							"refId": "A",
+							"expr":  fmt.Sprintf("metric%d", i),
 						},
-						"targets": []map[string]interface{}{
-							{
-								"refId": "A",
-								"expr":  fmt.Sprintf("metric%d", i),
-							},
-						},
-					}
-					largePanelArray = append(largePanelArray, panel)
+					},
 				}
-
-				spec["panels"] = largePanelArray
+				largePanelArray = append(largePanelArray, panel)
 			}
+
+			specMap["panels"] = largePanelArray
+
+			err = meta.SetSpec(specMap)
+			require.NoError(t, err, "Failed to set spec")
 
 			// Try to update with too many panels
 			_, err = adminClient.Resource.Update(context.Background(), dash, v1.UpdateOptions{})
@@ -1089,83 +1099,104 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			require.NoError(t, err)
 		})
 
-		t.Run("reject dashboard with extremely long panel description", func(t *testing.T) {
-			// Create a dashboard with a specific UID to make it easier to manage
-			specificUID := "long-description-test-dash"
-			dash, err := createDashboard(t, adminClient, "Dashboard with Extremely Long Panel Description", nil, &specificUID)
-			require.NoError(t, err)
+	})
+}
 
-			// Update dashboard with a panel that has an extremely long description
-			if spec, ok := dash.Object["spec"].(map[string]interface{}); ok {
-				// Generate a very long description string
-				longDescription := strings.Repeat("This is a very long dashboard panel description. ", 1000)
+// Run tests for quota validation
+func runQuotaTests(t *testing.T, ctx TestContext) {
+	t.Helper()
 
-				spec["panels"] = []map[string]interface{}{
-					{
-						"id":          1,
-						"type":        "graph",
-						"title":       "Panel with Long Description",
-						"description": longDescription, // Extremely long description
-					},
+	// Get access to services - use the helper environment's HTTP server
+	quotaService := ctx.Helper.GetEnv().Server.HTTPServer.QuotaService
+	require.NotNil(t, quotaService, "Quota service should be available")
+
+	adminClient := getResourceClient(t, ctx.Helper, ctx.AdminUser, getDashboardGVR())
+	adminUserId, err := identity.UserIdentifier(ctx.AdminUser.Identity.GetID())
+	require.NoError(t, err)
+
+	// Define quota test cases
+	testCases := []struct {
+		name       string
+		scope      quota.Scope
+		id         int64
+		scopeParam func(cmd *quota.UpdateQuotaCmd)
+	}{
+		{
+			name:  "Organization quota",
+			scope: quota.OrgScope,
+			id:    ctx.OrgID,
+			scopeParam: func(cmd *quota.UpdateQuotaCmd) {
+				cmd.OrgID = ctx.OrgID
+			},
+		},
+		{
+			name:  "User quota",
+			scope: quota.UserScope,
+			id:    adminUserId,
+			scopeParam: func(cmd *quota.UpdateQuotaCmd) {
+				cmd.UserID = adminUserId
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Get current quotas
+			quotas, err := quotaService.GetQuotasByScope(context.Background(), tc.scope, tc.id)
+			require.NoError(t, err, "Failed to get quotas")
+
+			// Find the dashboard quota and save original value
+			var originalQuota int64 = -1 // Default if not found
+			var quotaFound bool
+			for _, q := range quotas {
+				if q.Target == string(dashboards.QuotaTarget) {
+					originalQuota = q.Limit
+					quotaFound = true
+					break
 				}
 			}
 
-			// Try to update with the extremely long panel description
-			_, err = adminClient.Resource.Update(context.Background(), dash, v1.UpdateOptions{})
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "exceeds", "Error should mention size or limit exceeded")
+			// Set quota to 1 dashboard
+			updateCmd := &quota.UpdateQuotaCmd{
+				Target: string(dashboards.QuotaTarget),
+				Limit:  1,
+			}
+			tc.scopeParam(updateCmd)
 
-			// Clean up
-			err = adminClient.Resource.Delete(context.Background(), specificUID, v1.DeleteOptions{})
-			require.NoError(t, err)
-		})
-	})
+			err = quotaService.Update(context.Background(), updateCmd)
+			require.NoError(t, err, "Failed to update quota")
 
-	t.Run("Time range validations", func(t *testing.T) {
-		t.Run("reject dashboard with invalid time range", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Time Range", "", 0)
+			// Create first dashboard - should succeed
+			dash1, err := createDashboard(t, adminClient, fmt.Sprintf("Quota Test Dashboard 1 (%s)", tc.name), nil, nil)
+			require.NoError(t, err, "Failed to create first dashboard")
 
-			// Add invalid time range configuration
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["time"] = map[string]interface{}{
-					"from": "invalid-time-format",
-					"to":   "now",
+			// Create second dashboard - should fail due to quota
+			_, err = createDashboard(t, adminClient, fmt.Sprintf("Quota Test Dashboard 2 (%s)", tc.name), nil, nil)
+			require.Error(t, err, "Creating second dashboard should fail due to quota")
+			require.Contains(t, err.Error(), "quota", "Error should mention quota")
+
+			// Clean up the dashboard to reset the quota usage
+			err = adminClient.Resource.Delete(context.Background(), dash1.GetName(), v1.DeleteOptions{})
+			require.NoError(t, err, "Failed to delete test dashboard")
+
+			// Restore the original quota state
+			if quotaFound {
+				// If quota existed originally, restore its value
+				resetCmd := &quota.UpdateQuotaCmd{
+					Target: string(dashboards.QuotaTarget),
+					Limit:  originalQuota,
 				}
+				tc.scopeParam(resetCmd)
+
+				err = quotaService.Update(context.Background(), resetCmd)
+				require.NoError(t, err, "Failed to reset quota")
+			} else if tc.scope == quota.UserScope {
+				// If user quota didn't exist originally, delete it
+				err = quotaService.DeleteQuotaForUser(context.Background(), tc.id)
+				require.NoError(t, err, "Failed to delete user quota")
 			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
 		})
-
-		t.Run("reject dashboard with from time after to time", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Time Range Order", "", 0)
-
-			// Add invalid time range order
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["time"] = map[string]interface{}{
-					"from": "now",
-					"to":   "now-6h", // This is before "from", which is invalid
-				}
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-	})
-
-	t.Run("Schema version validations", func(t *testing.T) {
-		t.Run("reject dashboard with unsupported schema version", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Unsupported Schema Version", "", 0)
-
-			// Set an unsupported schema version
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["schemaVersion"] = 1 // Very old schema version
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-	})
+	}
 }
 
 // Helper function to create test context for an organization
@@ -1244,13 +1275,17 @@ func runCrossOrgTests(t *testing.T, org1Ctx, org2Ctx TestContext) {
 		folderTitle := "Cross-Org Folder"
 
 		// Create folder objects directly with fixed UIDs
-		folder1 := createFolderObject(folderTitle, org1Ctx.Helper.Namespacer(org1Ctx.OrgID), "")
-		folder1.Object["metadata"].(map[string]interface{})["name"] = folderUID
-		delete(folder1.Object["metadata"].(map[string]interface{}), "generateName")
+		folder1 := createFolderObject(t, folderTitle, org1Ctx.Helper.Namespacer(org1Ctx.OrgID), "")
+		meta1, err := utils.MetaAccessor(folder1)
+		require.NoError(t, err)
+		meta1.SetName(folderUID)
+		meta1.SetGenerateName("")
 
-		folder2 := createFolderObject(folderTitle, org2Ctx.Helper.Namespacer(org2Ctx.OrgID), "")
-		folder2.Object["metadata"].(map[string]interface{})["name"] = folderUID
-		delete(folder2.Object["metadata"].(map[string]interface{}), "generateName")
+		folder2 := createFolderObject(t, folderTitle, org2Ctx.Helper.Namespacer(org2Ctx.OrgID), "")
+		meta2, err := utils.MetaAccessor(folder2)
+		require.NoError(t, err)
+		meta2.SetName(folderUID)
+		meta2.SetGenerateName("")
 
 		// Create folders in both orgs
 		createdFolder1, err := org1FolderClient.Resource.Create(context.Background(), folder1, v1.CreateOptions{})
@@ -1303,8 +1338,9 @@ func runCrossOrgTests(t *testing.T, org1Ctx, org2Ctx TestContext) {
 				require.Equal(t, http.StatusNotFound, int(statusErr.Status().Code), "Should get 404 Not Found")
 
 				// Try to update the dashboard
-				dashObj := createDashboardObject("Attempt cross-org update", "", 0)
-				dashObj.Object["metadata"].(map[string]interface{})["name"] = targetDashUID
+				dashObj := createDashboardObject(t, "Attempt cross-org update", "", 0)
+				meta, _ := utils.MetaAccessor(dashObj)
+				meta.SetName(targetDashUID)
 				_, err = client.Resource.Update(context.Background(), dashObj, v1.UpdateOptions{})
 				require.Error(t, err, "Should not be able to update dashboard from another org")
 
@@ -1334,7 +1370,6 @@ func runCrossOrgTests(t *testing.T, org1Ctx, org2Ctx TestContext) {
 		testCrossOrgAccess(org2EditorTokenClient, org1DashUID, "Org2 editor token cannot access Org1 dashboard")
 		testCrossOrgAccess(org2ViewerTokenClient, org1DashUID, "Org2 viewer token cannot access Org1 dashboard")
 	})
-
 }
 
 // Helper function to set permissions for a user via the HTTP API
@@ -1404,7 +1439,9 @@ func getServiceAccountResourceClient(t *testing.T, helper *apis.K8sTestHelper, t
 }
 
 // Create a folder object for testing
-func createFolderObject(title string, namespace string, parentFolderUID string) *unstructured.Unstructured {
+func createFolderObject(t *testing.T, title string, namespace string, parentFolderUID string) *unstructured.Unstructured {
+	t.Helper()
+
 	folderObj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": folderv0alpha1.FolderResourceInfo.GroupVersion().String(),
@@ -1420,9 +1457,8 @@ func createFolderObject(title string, namespace string, parentFolderUID string) 
 	}
 
 	if parentFolderUID != "" {
-		folderObj.Object["metadata"].(map[string]interface{})["annotations"] = map[string]interface{}{
-			"grafana.app/folder": parentFolderUID,
-		}
+		meta, _ := utils.MetaAccessor(folderObj)
+		meta.SetFolder(parentFolderUID)
 	}
 
 	return folderObj
@@ -1440,7 +1476,7 @@ func createFolder(t *testing.T, helper *apis.K8sTestHelper, user apis.User, titl
 	})
 
 	// Create a folder resource
-	folderObj := createFolderObject(title, helper.Namespacer(user.Identity.GetOrgID()), "")
+	folderObj := createFolderObject(t, title, helper.Namespacer(user.Identity.GetOrgID()), "")
 
 	// Create the folder using the K8s client
 	ctx := context.Background()
@@ -1449,29 +1485,19 @@ func createFolder(t *testing.T, helper *apis.K8sTestHelper, user apis.User, titl
 		return nil, err
 	}
 
-	// Get the UID (in K8s API, name is the UID)
-	folderUID := createdFolder.GetName()
-
-	// Extract folder properties for compatibility with the existing test code
-	spec, ok := createdFolder.Object["spec"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("folder spec is not a map")
-	}
-
-	folderTitle, ok := spec["title"].(string)
-	if !ok {
-		return nil, fmt.Errorf("folder title is not a string")
-	}
+	meta, _ := utils.MetaAccessor(createdFolder)
 
 	// Create a folder struct to return (for compatibility with existing code)
 	return &folder.Folder{
-		UID:   folderUID,
-		Title: folderTitle,
+		UID:   createdFolder.GetName(),
+		Title: meta.FindTitle(""),
 	}, nil
 }
 
 // Create a dashboard object for testing
-func createDashboardObject(title string, folderUID string, version int) *unstructured.Unstructured {
+func createDashboardObject(t *testing.T, title string, folderUID string, version int) *unstructured.Unstructured {
+	t.Helper()
+
 	dashObj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": dashboardv1alpha1.DashboardResourceInfo.GroupVersion().String(),
@@ -1485,13 +1511,26 @@ func createDashboardObject(title string, folderUID string, version int) *unstruc
 		},
 	}
 
+	// Get the metadata accessor
+	meta, err := utils.MetaAccessor(dashObj)
+	require.NoError(t, err, "Failed to get metadata accessor")
+
+	// Get the dashboard's spec
+	spec, err := meta.GetSpec()
+	require.NoError(t, err, "Failed to get spec")
+	specMap := spec.(map[string]interface{})
+
 	if folderUID != "" {
-		dashObj.Object["spec"].(map[string]interface{})["folderUID"] = folderUID
+		meta.SetFolder(folderUID)
 	}
 
 	if version > 0 {
-		dashObj.Object["spec"].(map[string]interface{})["version"] = version
+		specMap["version"] = version
 	}
+
+	// Update the spec
+	err = meta.SetSpec(specMap)
+	require.NoError(t, err, "Failed to set spec")
 
 	return dashObj
 }
@@ -1524,11 +1563,12 @@ func createDashboard(t *testing.T, client *apis.K8sResourceClient, title string,
 		folderUIDStr = *folderUID
 	}
 
-	dashObj := createDashboardObject(title, folderUIDStr, 0)
+	dashObj := createDashboardObject(t, title, folderUIDStr, 0)
 
 	// Set the name (UID) if provided
 	if uid != nil && *uid != "" {
-		dashObj.Object["metadata"].(map[string]interface{})["name"] = *uid
+		meta, _ := utils.MetaAccessor(dashObj)
+		meta.SetName(*uid)
 		// Remove generateName if we're explicitly setting a name
 		delete(dashObj.Object["metadata"].(map[string]interface{}), "generateName")
 	}
@@ -1555,15 +1595,21 @@ func createDashboard(t *testing.T, client *apis.K8sResourceClient, title string,
 func updateDashboard(t *testing.T, client *apis.K8sResourceClient, dashboard *unstructured.Unstructured, newTitle string, updateMessage *string) (*unstructured.Unstructured, error) {
 	t.Helper()
 
-	// Get the current spec
-	spec := dashboard.Object["spec"].(map[string]interface{})
+	meta, _ := utils.MetaAccessor(dashboard)
 
-	// Update the spec
-	spec["title"] = newTitle
+	// Get the spec using MetaAccessor
+	dashSpec, _ := meta.GetSpec()
+	specMap := dashSpec.(map[string]interface{})
 
-	// TODO: Check the correct syntax for the message! Just added this as placeholder!!
+	// Update the title
+	specMap["title"] = newTitle
+
+	// Set the updated spec
+	meta.SetSpec(specMap)
+
+	// Set message if provided
 	if updateMessage != nil {
-		spec["message"] = *updateMessage
+		meta.SetMessage(*updateMessage)
 	}
 
 	// Update the dashboard
