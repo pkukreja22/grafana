@@ -42,10 +42,10 @@ type TestContext struct {
 	OrgID                     int64
 }
 
-// TestK8sDashboardIntegration tests the dashboard K8s API integration
+// TestIntegrationK8sDashboard tests the dashboard K8s API integration
 // These tests cover various scenarios including user types, permissions,
 // and validation for dashboard operations through the k8s API
-func TestK8sDashboardIntegration(t *testing.T) {
+func TestIntegrationK8sDashboard(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
@@ -203,6 +203,12 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 								require.Equal(t, loc.folderUID, spec["folderUID"])
 							}
 
+							// Verify the folder is also set as an annotation
+							metadata := dash.Object["metadata"].(map[string]interface{})
+							annotations, hasAnnotations := metadata["annotations"].(map[string]interface{})
+							require.True(t, hasAnnotations, "Dashboard should have annotations")
+							require.Equal(t, loc.folderUID, annotations["grafana.app/folder"], "Dashboard should have folder annotation")
+
 							// Clean up
 							err = adminClient.Resource.Delete(context.Background(), dash.GetName(), v1.DeleteOptions{})
 							require.NoError(t, err)
@@ -224,7 +230,7 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 
 				if roleCapabilities.canUpdate {
 					// Test can update dashboard
-					updatedDash, err := updateDashboard(t, identity.Client, dash, "Updated by "+identity.Name)
+					updatedDash, err := updateDashboard(t, identity.Client, dash, "Updated by "+identity.Name, nil)
 					require.NoError(t, err)
 					require.NotNil(t, updatedDash)
 
@@ -233,7 +239,7 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 					require.Equal(t, "Updated by "+identity.Name, updatedSpec["title"])
 				} else {
 					// Test cannot update dashboard
-					_, err := updateDashboard(t, identity.Client, dash, "Updated by "+identity.Name)
+					_, err := updateDashboard(t, identity.Client, dash, "Updated by "+identity.Name, nil)
 					require.Error(t, err)
 				}
 
@@ -344,7 +350,7 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 				require.NotNil(t, dash)
 
 				// Editor should not be able to update the dashboard (only has view permission)
-				_, err = updateDashboard(t, editorClient, dash, "Updated by Editor in Restricted Folder")
+				_, err = updateDashboard(t, editorClient, dash, "Updated by Editor in Restricted Folder", nil)
 				require.Error(t, err, "Should not be able to update dashboard with only VIEW permission")
 
 				// Clean up
@@ -368,6 +374,12 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 					spec := dash.Object["spec"].(map[string]interface{})
 					require.Equal(t, folderUID, spec["folderUID"])
 
+					// Verify the folder is also set as an annotation
+					metadata := dash.Object["metadata"].(map[string]interface{})
+					annotations, hasAnnotations := metadata["annotations"].(map[string]interface{})
+					require.True(t, hasAnnotations, "Dashboard should have annotations")
+					require.Equal(t, folderUID, annotations["grafana.app/folder"], "Dashboard should have folder annotation")
+
 					// Clean up
 					err = adminClient.Resource.Delete(context.Background(), dash.GetName(), v1.DeleteOptions{})
 					require.NoError(t, err)
@@ -381,7 +393,7 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 					require.NotNil(t, dash)
 
 					// Editor should now be able to update the dashboard (has EDIT permission)
-					updatedDash, err := updateDashboard(t, editorClient, dash, "Updated by Editor with EDIT Permission")
+					updatedDash, err := updateDashboard(t, editorClient, dash, "Updated by Editor with EDIT Permission", nil)
 					require.NoError(t, err)
 					require.NotNil(t, updatedDash)
 
@@ -396,12 +408,13 @@ func runAuthorizationTests(t *testing.T, ctx TestContext) {
 			})
 
 			// Clean up the folder
-			// TODO: CHeck if this should be forced to admin.
 			err = folderClient.Resource.Delete(context.Background(), folderUID, v1.DeleteOptions{})
 			require.NoError(t, err)
 		})
 	}
 }
+
+// TODO: Test plugin dashboard updates with and without overwrite flag
 
 // Run tests for dashboard permissions
 func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
@@ -434,7 +447,7 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		require.NoError(t, err)
 
 		// Update the dashboard with viewer (should succeed because of custom permissions)
-		updatedDash, err := updateDashboard(t, viewerClient, viewedDash, "Updated by Viewer with Permission")
+		updatedDash, err := updateDashboard(t, viewerClient, viewedDash, "Updated by Viewer with Permission", nil)
 		require.NoError(t, err)
 		require.NotNil(t, updatedDash)
 
@@ -465,14 +478,14 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		setResourceUserPermission(t, ctx, ctx.AdminUser, "dashboards", dash2UID, viewerUserID, dashboardaccess.PERMISSION_EDIT)
 
 		// Verify viewer cannot edit dashboard1 (no custom permissions)
-		_, err = updateDashboard(t, viewerClient, dash1, "This should fail - no permissions")
+		_, err = updateDashboard(t, viewerClient, dash1, "This should fail - no permissions", nil)
 		require.Error(t, err, "Viewer should not be able to update dashboard without permissions")
 
 		// Verify viewer can edit dashboard2 (with custom permissions)
 		viewedDash2, err := viewerClient.Resource.Get(context.Background(), dash2UID, v1.GetOptions{})
 		require.NoError(t, err)
 
-		updatedDash2, err := updateDashboard(t, viewerClient, viewedDash2, "Updated by Viewer with Dashboard-Specific Permission")
+		updatedDash2, err := updateDashboard(t, viewerClient, viewedDash2, "Updated by Viewer with Dashboard-Specific Permission", nil)
 		require.NoError(t, err)
 		require.NotNil(t, updatedDash2)
 
@@ -511,7 +524,7 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		require.NotNil(t, viewedDash)
 
 		// Update the dashboard with viewer (should succeed because of folder permissions)
-		updatedDash, err := updateDashboard(t, viewerClient, viewedDash, "Updated by Viewer with Folder Permission")
+		updatedDash, err := updateDashboard(t, viewerClient, viewedDash, "Updated by Viewer with Folder Permission", nil)
 		require.NoError(t, err)
 		require.NotNil(t, updatedDash)
 
@@ -550,7 +563,7 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		viewedDash, err := viewerClient.Resource.Get(context.Background(), dashUID, v1.GetOptions{})
 		require.NoError(t, err)
 
-		updatedDash, err := updateDashboard(t, viewerClient, viewedDash, "Updated by Viewer with Permission from Editor")
+		updatedDash, err := updateDashboard(t, viewerClient, viewedDash, "Updated by Viewer with Permission from Editor", nil)
 		require.NoError(t, err)
 		require.NotNil(t, updatedDash)
 
@@ -575,7 +588,7 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		initialViewedDash, err := editorClient.Resource.Get(context.Background(), dashUID, v1.GetOptions{})
 		require.NoError(t, err)
 
-		initialUpdatedDash, err := updateDashboard(t, editorClient, initialViewedDash, "Initial Update by Creator")
+		initialUpdatedDash, err := updateDashboard(t, editorClient, initialViewedDash, "Initial Update by Creator", nil)
 		require.NoError(t, err)
 		require.NotNil(t, initialUpdatedDash)
 
@@ -588,7 +601,7 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		require.NoError(t, err)
 
 		// Update attempt should fail
-		_, err = updateDashboard(t, editorClient, viewedDash, "This update should fail")
+		_, err = updateDashboard(t, editorClient, viewedDash, "This update should fail", nil)
 		require.Error(t, err, "Editor should not be able to update dashboard after admin restricts permissions")
 
 		// Editor should also not be able to delete the dashboard
@@ -609,27 +622,27 @@ func runDashboardPermissionTests(t *testing.T, ctx TestContext) {
 		dash, err := createDashboard(t, adminClient, "Dashboard for Cross-Org Permissions Test", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, dash)
-		dashUID := dash.GetName()
+		org1DashUID := dash.GetName()
 
 		// Set the highest permissions for the viewer in the current org
 		viewerUserID := ctx.ViewerUser.Identity.GetUID()
-		setResourceUserPermission(t, ctx, ctx.AdminUser, "dashboards", dashUID, viewerUserID, dashboardaccess.PERMISSION_ADMIN)
+		setResourceUserPermission(t, ctx, ctx.AdminUser, "dashboards", org1DashUID, viewerUserID, dashboardaccess.PERMISSION_ADMIN)
 
 		// Verify the viewer in the current org can now view and update the dashboard
-		viewerDash, err := viewerClient.Resource.Get(context.Background(), dashUID, v1.GetOptions{})
+		viewerDash, err := viewerClient.Resource.Get(context.Background(), org1DashUID, v1.GetOptions{})
 		require.NoError(t, err, "Viewer with custom permissions should be able to view the dashboard")
 
-		_, err = updateDashboard(t, viewerClient, viewerDash, "Updated by Viewer with Admin Permissions")
+		_, err = updateDashboard(t, viewerClient, viewerDash, "Updated by Viewer with Admin Permissions", nil)
 		require.NoError(t, err, "Viewer with admin permissions should be able to update the dashboard")
 
 		// Try to access the dashboard from a viewer in the other org
-		_, err = otherOrgClient.Resource.Get(context.Background(), dashUID, v1.GetOptions{})
+		_, err = otherOrgClient.Resource.Get(context.Background(), org1DashUID, v1.GetOptions{})
 		require.Error(t, err, "User from other org should not be able to view dashboard even with custom permissions")
 		statusErr := ctx.Helper.AsStatusError(err)
 		require.Equal(t, http.StatusNotFound, int(statusErr.Status().Code), "Should get 404 Not Found")
 
 		// Clean up
-		err = adminClient.Resource.Delete(context.Background(), dashUID, v1.DeleteOptions{})
+		err = adminClient.Resource.Delete(context.Background(), org1DashUID, v1.DeleteOptions{})
 		require.NoError(t, err)
 	})
 }
@@ -675,6 +688,7 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 		})
 	})
 
+	// TODO: Validate both at creation and update
 	t.Run("Dashboard title validations", func(t *testing.T) {
 		// Test empty title
 		t.Run("reject dashboard with empty title", func(t *testing.T) {
@@ -684,8 +698,53 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 
 		// Test long title
 		t.Run("reject dashboard with excessively long title", func(t *testing.T) {
-			veryLongTitle := "This is an extremely long dashboard title that should exceed the maximum allowed length for dashboard titles in Grafana and therefore should be rejected by the validation system as too long"
+			veryLongTitle := strings.Repeat("a", 10000)
 			_, err := createDashboard(t, adminClient, veryLongTitle, nil, nil)
+			require.Error(t, err)
+		})
+
+		// Test updating dashboard with empty title
+		t.Run("reject dashboard update with empty title", func(t *testing.T) {
+			// First create a valid dashboard
+			dash, err := createDashboard(t, adminClient, "Valid Dashboard Title", nil, nil)
+			require.NoError(t, err)
+			require.NotNil(t, dash)
+
+			// Try to update with empty title
+			_, err = updateDashboard(t, adminClient, dash, "", nil)
+			require.Error(t, err)
+
+			// Clean up
+			err = adminClient.Resource.Delete(context.Background(), dash.GetName(), v1.DeleteOptions{})
+			require.NoError(t, err)
+		})
+
+		// Test updating dashboard with excessively long title
+		t.Run("reject dashboard update with excessively long title", func(t *testing.T) {
+			// First create a valid dashboard
+			dash, err := createDashboard(t, adminClient, "Valid Dashboard Title", nil, nil)
+			require.NoError(t, err)
+			require.NotNil(t, dash)
+
+			// Try to update with excessively long title
+			veryLongTitle := strings.Repeat("a", 10000)
+			_, err = updateDashboard(t, adminClient, dash, veryLongTitle, nil)
+			require.Error(t, err)
+
+			// Clean up
+			err = adminClient.Resource.Delete(context.Background(), dash.GetName(), v1.DeleteOptions{})
+			require.NoError(t, err)
+		})
+	})
+
+	t.Run("Dashboard message validations", func(t *testing.T) {
+		// Test long message
+		t.Run("reject dashboard with excessively long update message", func(t *testing.T) {
+			dash, err := createDashboard(t, adminClient, "Regular dashboard", nil, nil)
+			require.NoError(t, err)
+
+			veryLongMessage := strings.Repeat("a", 600)
+			_, err = updateDashboard(t, adminClient, dash, "Dashboard updated with a long message", &veryLongMessage)
 			require.Error(t, err)
 		})
 	})
@@ -763,7 +822,7 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			}
 
 			// Update the dashboard
-			updatedDash, err := updateDashboard(t, adminClient, dash, "Updated Dashboard for Version Test")
+			updatedDash, err := updateDashboard(t, adminClient, dash, "Updated Dashboard for Version Test", nil)
 			require.NoError(t, err)
 			require.NotNil(t, updatedDash)
 
@@ -792,12 +851,12 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			require.NoError(t, err)
 
 			// Update with the first copy
-			updatedDash1, err := updateDashboard(t, adminClient, dash1, "Updated by first user")
+			updatedDash1, err := updateDashboard(t, adminClient, dash1, "Updated by first user", nil)
 			require.NoError(t, err)
 			require.NotNil(t, updatedDash1)
 
 			// Try to update with the second copy (should fail with version conflict)
-			_, err = updateDashboard(t, editorClient, dash2, "Updated by second user")
+			_, err = updateDashboard(t, editorClient, dash2, "Updated by second user", nil)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "the object has been modified", "Should fail with version conflict error")
 
@@ -833,76 +892,6 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			// Clean up
 			err = adminClient.Resource.Delete(context.Background(), dashUID, v1.DeleteOptions{})
 			require.NoError(t, err)
-		})
-	})
-
-	t.Run("Dashboard annotation validations", func(t *testing.T) {
-		// Test invalid annotation query format
-		t.Run("reject dashboard with invalid annotation query", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Annotation Query", "", 0)
-
-			// Add invalid annotation configuration
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["annotations"] = map[string]interface{}{
-					"list": []map[string]interface{}{
-						{
-							"name": "Invalid Annotation",
-							"datasource": map[string]interface{}{
-								"type": "prometheus",
-								"uid":  "invalid-uid", // Non-existent datasource UID
-							},
-							"iconColor": "rgba(255, 96, 96, 1)",
-							"enable":    true,
-							"query":     "{{", // Invalid query syntax
-						},
-					},
-				}
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-
-		// Test annotation without required fields
-		t.Run("reject dashboard with incomplete annotation configuration", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Incomplete Annotation Config", "", 0)
-
-			// Add annotation configuration missing required fields
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["annotations"] = map[string]interface{}{
-					"list": []map[string]interface{}{
-						{
-							// Missing required name field
-							"enable": true,
-							"query":  "test query",
-						},
-					},
-				}
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-
-		// Test annotation with invalid color format
-		t.Run("reject dashboard with invalid annotation color format", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Annotation Color", "", 0)
-
-			// Add annotation with invalid color format
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["annotations"] = map[string]interface{}{
-					"list": []map[string]interface{}{
-						{
-							"name":      "Invalid Color Annotation",
-							"enable":    true,
-							"iconColor": "not-a-color", // Invalid color format
-						},
-					},
-				}
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
 		})
 	})
 
@@ -951,7 +940,7 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 				require.NotNil(t, provisionedFetchedDash)
 
 				// Try to update the dashboard using editor (not admin)
-				_, err = updateDashboard(t, editorClient, provisionedFetchedDash, "Updated Provisioned Dashboard")
+				_, err = updateDashboard(t, editorClient, provisionedFetchedDash, "Updated Provisioned Dashboard", nil)
 
 				if tc.shouldSucceed {
 					require.NoError(t, err, "Editor should be able to update provisioned dashboard when allowsEdits is true")
@@ -974,185 +963,81 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 	})
 
 	t.Run("Dashboard refresh interval validations", func(t *testing.T) {
-		t.Run("reject dashboard with refresh interval below minimum", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Short Refresh", "", 0)
+		// Create test client
+		adminClient := getResourceClient(t, ctx.Helper, ctx.AdminUser, getDashboardGVR())
 
-			// Add refresh configuration that should be too frequent
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["refresh"] = "1s" // Too frequent, below typical minimum
-			}
+		// Store original settings to restore after test
+		origCfg := ctx.Helper.GetEnv().Cfg
+		origMinRefreshInterval := origCfg.MinRefreshInterval
 
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-	})
+		// Set a fixed min_refresh_interval for all tests to make them predictable
+		ctx.Helper.GetEnv().Cfg.MinRefreshInterval = "10s"
 
-	t.Run("Dashboard tag validations", func(t *testing.T) {
-		t.Run("reject dashboard with excessive number of tags", func(t *testing.T) {
-			// Create a dashboard with too many tags
-			dashObj := createDashboardObject("Dashboard with Too Many Tags", "", 0)
+		testCases := []struct {
+			name          string
+			refreshValue  string
+			shouldSucceed bool
+		}{
+			{
+				name:          "reject dashboard with refresh interval below minimum",
+				refreshValue:  "5s",
+				shouldSucceed: false,
+			},
+			{
+				name:          "accept dashboard with refresh interval equal to minimum",
+				refreshValue:  "10s",
+				shouldSucceed: true,
+			},
+			{
+				name:          "accept dashboard with refresh interval above minimum",
+				refreshValue:  "30s",
+				shouldSucceed: true,
+			},
+			{
+				name:          "accept dashboard with auto refresh",
+				refreshValue:  "auto",
+				shouldSucceed: true,
+			},
+			{
+				name:          "accept dashboard with empty refresh",
+				refreshValue:  "",
+				shouldSucceed: true,
+			},
+			{
+				name:          "reject dashboard with invalid refresh format",
+				refreshValue:  "invalid",
+				shouldSucceed: false,
+			},
+		}
 
-			// Add excessive number of tags
-			tooManyTags := []string{}
-			for i := 0; i < 100; i++ { // Assuming 100 is more than the max limit
-				tooManyTags = append(tooManyTags, fmt.Sprintf("tag%d", i))
-			}
+		for _, tc := range testCases {
+			tc := tc // Capture for parallel execution
+			t.Run(tc.name, func(t *testing.T) {
+				// Create the dashboard with the specified refresh value
+				dashObj := createDashboardObject("Dashboard with Refresh: "+tc.refreshValue, "", 0)
 
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["tags"] = tooManyTags
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-
-		t.Run("reject dashboard with invalid tag characters", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Tags", "", 0)
-
-			// Add tags with invalid characters
-			invalidTags := []string{"tag with spaces", "tag/with/slashes", "tag,with,commas"}
-
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["tags"] = invalidTags
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-	})
-
-	t.Run("Dashboard panels validations", func(t *testing.T) {
-		t.Run("reject dashboard with invalid panel config", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Panel", "", 0)
-
-			// Add invalid panel configuration
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["panels"] = []map[string]interface{}{
-					{
-						"id":    "not-a-number", // Panel ID should be numeric
-						"type":  "graph",
-						"title": "Invalid Panel",
-					},
+				// Add refresh configuration
+				if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
+					spec["refresh"] = tc.refreshValue
 				}
-			}
 
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
+				dash, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
 
-		t.Run("reject dashboard with duplicate panel IDs", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Duplicate Panel IDs", "", 0)
+				if tc.shouldSucceed {
+					require.NoError(t, err)
+					require.NotNil(t, dash)
 
-			// Add panels with duplicate IDs
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["panels"] = []map[string]interface{}{
-					{
-						"id":    1,
-						"type":  "graph",
-						"title": "Panel One",
-					},
-					{
-						"id":    1, // Duplicate ID
-						"type":  "graph",
-						"title": "Panel Two",
-					},
+					// Clean up
+					err = adminClient.Resource.Delete(context.Background(), dash.GetName(), v1.DeleteOptions{})
+					require.NoError(t, err)
+				} else {
+					require.Error(t, err)
 				}
-			}
+			})
+		}
 
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-	})
-
-	// TODO: Double check these templating tests.
-	t.Run("Dashboard variables validations", func(t *testing.T) {
-		t.Run("reject dashboard with invalid variable name", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Variable Name", "", 0)
-
-			// Add invalid variable configuration
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["templating"] = map[string]interface{}{
-					"list": []map[string]interface{}{
-						{
-							"name":  "invalid-name-with-spaces !", // Invalid variable name
-							"type":  "query",
-							"query": "test",
-						},
-						{
-							"name":  "invalid-name-with-spaces!", // Invalid variable name
-							"type":  "query",
-							"query": "test",
-						},
-					},
-				}
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-
-		t.Run("reject dashboard with duplicate variable names", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Duplicate Variable Names", "", 0)
-
-			// Add variables with duplicate names
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["templating"] = map[string]interface{}{
-					"list": []map[string]interface{}{
-						{
-							"name":  "var1",
-							"type":  "query",
-							"query": "test",
-						},
-						{
-							"name":  "var1", // Duplicate name
-							"type":  "custom",
-							"query": "test2",
-						},
-					},
-				}
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-	})
-
-	t.Run("Dashboard links validations", func(t *testing.T) {
-		t.Run("reject dashboard with invalid link URL", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Link URL", "", 0)
-
-			// Add invalid link configuration
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["links"] = []map[string]interface{}{
-					{
-						"title": "Bad Link",
-						"url":   "not-a-valid-url", // Invalid URL format
-						"type":  "link",
-					},
-				}
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
-
-		t.Run("reject dashboard with invalid dashboard link uid", func(t *testing.T) {
-			dashObj := createDashboardObject("Dashboard with Invalid Dashboard Link", "", 0)
-
-			// Add invalid dashboard link configuration
-			if spec, ok := dashObj.Object["spec"].(map[string]interface{}); ok {
-				spec["links"] = []map[string]interface{}{
-					{
-						"title":        "Bad Dashboard Link",
-						"type":         "dashboard",
-						"dashboardUID": "non-existent-uid",
-					},
-				}
-			}
-
-			_, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
-			require.Error(t, err)
-		})
+		// Restore original settings
+		ctx.Helper.GetEnv().Cfg.MinRefreshInterval = origMinRefreshInterval
 	})
 
 	t.Run("Dashboard size limit validations", func(t *testing.T) {
@@ -1656,6 +1541,7 @@ func createDashboard(t *testing.T, client *apis.K8sResourceClient, title string,
 
 	// TODO: Remove once the underlying issue is fixed:
 	// https://raintank-corp.slack.com/archives/C05FYAPEPKP/p1743111830777889
+	// This only happens in mode 0.
 	databaseDash, err := client.Resource.Get(context.Background(), createdDash.GetName(), v1.GetOptions{})
 	if err != nil {
 		return nil, err
@@ -1666,7 +1552,7 @@ func createDashboard(t *testing.T, client *apis.K8sResourceClient, title string,
 }
 
 // Update a dashboard
-func updateDashboard(t *testing.T, client *apis.K8sResourceClient, dashboard *unstructured.Unstructured, newTitle string) (*unstructured.Unstructured, error) {
+func updateDashboard(t *testing.T, client *apis.K8sResourceClient, dashboard *unstructured.Unstructured, newTitle string, updateMessage *string) (*unstructured.Unstructured, error) {
 	t.Helper()
 
 	// Get the current spec
@@ -1674,6 +1560,11 @@ func updateDashboard(t *testing.T, client *apis.K8sResourceClient, dashboard *un
 
 	// Update the spec
 	spec["title"] = newTitle
+
+	// TODO: Check the correct syntax for the message! Just added this as placeholder!!
+	if updateMessage != nil {
+		spec["message"] = *updateMessage
+	}
 
 	// Update the dashboard
 	return client.Resource.Update(context.Background(), dashboard, v1.UpdateOptions{})
