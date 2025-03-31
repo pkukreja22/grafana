@@ -788,9 +788,8 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 
 			// Get the initial version
 			meta, _ := utils.MetaAccessor(dash)
-			spec, _ := meta.GetSpec()
-			specMap := spec.(map[string]interface{})
-			initialVersion := specMap["version"].(int64)
+			initialGeneration := meta.GetGeneration()
+			initialRV := meta.GetResourceVersion()
 
 			// Update the dashboard
 			updatedDash, err := updateDashboard(t, adminClient, dash, "Updated Dashboard for Version Test", nil)
@@ -799,16 +798,15 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 
 			// Check that version was incremented
 			meta, _ = utils.MetaAccessor(updatedDash)
-			spec, _ = meta.GetSpec()
-			specMap = spec.(map[string]interface{})
-			require.Greater(t, specMap["version"].(int64), initialVersion, "Version should be incremented after update")
+			require.Greater(t, meta.GetGeneration(), initialGeneration, "Generation should be incremented after update")
+			require.NotEqual(t, meta.GetResourceVersion(), initialRV, "Resource version should be changed after update")
 
 			// Clean up
 			err = adminClient.Resource.Delete(context.Background(), dashUID, v1.DeleteOptions{})
 			require.NoError(t, err)
 		})
 
-		// Test version conflict when updating concurrently
+		// Test generation conflict when updating concurrently
 		t.Run("reject update with version conflict", func(t *testing.T) {
 			// Create a dashboard with admin
 			dash, err := createDashboard(t, adminClient, "Dashboard for Version Conflict Test", nil, nil)
@@ -836,16 +834,12 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			require.NoError(t, err)
 		})
 
-		// Test setting an explicit version
-		t.Run("explicit version setting is validated", func(t *testing.T) {
-			// Create a dashboard with a specific version
-			dashObj := createDashboardObject(t, "Dashboard with Explicit Version", "", 0)
+		// Test setting an explicit generation
+		t.Run("explicit generation setting is validated", func(t *testing.T) {
+			// Create a dashboard with a specific generation
+			dashObj := createDashboardObject(t, "Dashboard with Explicit Generation", "", 0)
 			meta, _ := utils.MetaAccessor(dashObj)
-			spec, _ := meta.GetSpec()
-			specMap := spec.(map[string]interface{})
-
-			// Set an explicit version in the spec
-			specMap["version"] = 5 // Set explicit version
+			meta.SetGeneration(5)
 
 			// Create the dashboard
 			createdDash, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
@@ -856,11 +850,9 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			fetchedDash, err := adminClient.Resource.Get(context.Background(), dashUID, v1.GetOptions{})
 			require.NoError(t, err)
 
-			// Verify the version was handled properly
+			// Verify the generation was handled properly
 			meta, _ = utils.MetaAccessor(fetchedDash)
-			spec, _ = meta.GetSpec()
-			specMap = spec.(map[string]interface{})
-			require.Equal(t, 5, specMap["version"], "Version should be 5")
+			require.Equal(t, 5, meta.GetGeneration(), "Generation should be 5")
 
 			// Clean up
 			err = adminClient.Resource.Delete(context.Background(), dashUID, v1.DeleteOptions{})
@@ -1468,7 +1460,7 @@ func createFolder(t *testing.T, helper *apis.K8sTestHelper, user apis.User, titl
 }
 
 // Create a dashboard object for testing
-func createDashboardObject(t *testing.T, title string, folderUID string, version int) *unstructured.Unstructured {
+func createDashboardObject(t *testing.T, title string, folderUID string, generation int64) *unstructured.Unstructured {
 	t.Helper()
 
 	dashObj := &unstructured.Unstructured{
@@ -1497,8 +1489,8 @@ func createDashboardObject(t *testing.T, title string, folderUID string, version
 		meta.SetFolder(folderUID)
 	}
 
-	if version > 0 {
-		specMap["version"] = version
+	if generation > 0 {
+		meta.SetGeneration(generation)
 	}
 
 	// Update the spec

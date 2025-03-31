@@ -61,7 +61,6 @@ var (
 
 const (
 	DASHBOARD_SPEC_TITLE            = "title"
-	DASHBOARD_SPEC_VERSION          = "version"
 	DASHBOARD_SPEC_REFRESH_INTERVAL = "refresh"
 )
 
@@ -95,7 +94,6 @@ func RegisterAPIService(
 	accessControl accesscontrol.AccessControl,
 	provisioning provisioning.ProvisioningService,
 	dashStore dashboards.Store,
-	folderStore grafanarest.Storage,
 	reg prometheus.Registerer,
 	sql db.DB,
 	tracing *tracing.TracingService,
@@ -118,7 +116,6 @@ func RegisterAPIService(
 		dashboardProvisioningService: provisioningDashboardService,
 		search:                       NewSearchHandler(tracing, dual, legacyDashboardSearcher, unified, features),
 		dashStore:                    dashStore,
-		folderStore:                  folderStore,
 		QuotaService:                 quotaService,
 		ProvisioningService:          provisioning,
 		cfg:                          cfg,
@@ -351,9 +348,9 @@ func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.A
 		return err
 	}
 
-	// Validate version conflicts
-	if oldDash.Spec.GetNestedInt64(DASHBOARD_SPEC_VERSION) > newDash.Spec.GetNestedInt64(DASHBOARD_SPEC_VERSION) {
-		return dashboards.ErrDashboardVersionMismatch
+	// Validate generation conflicts
+	if oldAccessor.GetGeneration() > newAccessor.GetGeneration() {
+		return dashboards.ErrDashboardVersionMismatch // TODO: Check if this is the correct error to return
 	}
 
 	return nil
