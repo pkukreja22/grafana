@@ -31,7 +31,6 @@ import (
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	grafanaregistry "github.com/grafana/grafana/pkg/apiserver/registry/generic"
-	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
@@ -42,6 +41,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/apiserver/endpoints/request"
 	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
+	"github.com/grafana/grafana/pkg/services/folder"
 	"github.com/grafana/grafana/pkg/services/provisioning"
 	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/search/sort"
@@ -76,7 +76,7 @@ type DashboardsAPIBuilder struct {
 	scheme                       *runtime.Scheme
 	search                       *SearchHandler
 	dashStore                    dashboards.Store
-	folderStore                  grafanarest.Storage
+	folderStore                  folder.FolderStore
 	QuotaService                 quota.Service
 	ProvisioningService          provisioning.ProvisioningService
 	cfg                          *setting.Cfg
@@ -101,6 +101,7 @@ func RegisterAPIService(
 	dual dualwrite.Service,
 	sorter sort.Service,
 	quotaService quota.Service,
+	folderStore folder.FolderStore,
 ) *DashboardsAPIBuilder {
 	softDelete := features.IsEnabledGlobally(featuremgmt.FlagDashboardRestore)
 	dbp := legacysql.NewDatabaseProvider(sql)
@@ -116,6 +117,7 @@ func RegisterAPIService(
 		dashboardProvisioningService: provisioningDashboardService,
 		search:                       NewSearchHandler(tracing, dual, legacyDashboardSearcher, unified, features),
 		dashStore:                    dashStore,
+		folderStore:                  folderStore,
 		QuotaService:                 quotaService,
 		ProvisioningService:          provisioning,
 		cfg:                          cfg,
@@ -391,12 +393,12 @@ func (b *DashboardsAPIBuilder) validateBasicProperties(dash *v1alpha1.Dashboard,
 
 // validateFolderExists checks if a folder exists
 func (b *DashboardsAPIBuilder) validateFolderExists(ctx context.Context, folderUID string, orgID int64) error {
-	_, err := b.folderStore.Get(ctx, folderUID, &metav1.GetOptions{})
-	// TODO: Consider replacing with list exact operation.
+	// Check if folder exists using the folder store
+	_, err := b.folderStore.GetFolderByUID(ctx, orgID, folderUID)
 
 	if err != nil {
 		if errors.Is(err, dashboards.ErrFolderNotFound) {
-			return fmt.Errorf("folder with UID %s not found", folderUID)
+			return err
 		}
 		return fmt.Errorf("error checking folder existence: %w", err)
 	}
