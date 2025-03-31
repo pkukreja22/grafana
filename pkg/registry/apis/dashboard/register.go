@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,8 +28,10 @@ import (
 	"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1alpha1"
 	"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1"
 	"github.com/grafana/grafana/apps/dashboard/pkg/migration/conversion"
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	grafanaregistry "github.com/grafana/grafana/pkg/apiserver/registry/generic"
+	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
@@ -54,6 +59,12 @@ var (
 	_ builder.APIGroupRouteProvider    = (*DashboardsAPIBuilder)(nil)
 )
 
+const (
+	DASHBOARD_SPEC_TITLE            = "title"
+	DASHBOARD_SPEC_VERSION          = "version"
+	DASHBOARD_SPEC_REFRESH_INTERVAL = "refresh"
+)
+
 // This is used just so wire has something unique to return
 type DashboardsAPIBuilder struct {
 	dashboardService dashboards.DashboardService
@@ -65,6 +76,11 @@ type DashboardsAPIBuilder struct {
 	dashboardProvisioningService dashboards.DashboardProvisioningService
 	scheme                       *runtime.Scheme
 	search                       *SearchHandler
+	dashStore                    dashboards.Store
+	folderStore                  grafanarest.Storage
+	QuotaService                 quota.Service
+	ProvisioningService          provisioning.ProvisioningService
+	cfg                          *setting.Cfg
 
 	log log.Logger
 	reg prometheus.Registerer
@@ -79,12 +95,14 @@ func RegisterAPIService(
 	accessControl accesscontrol.AccessControl,
 	provisioning provisioning.ProvisioningService,
 	dashStore dashboards.Store,
+	folderStore grafanarest.Storage,
 	reg prometheus.Registerer,
 	sql db.DB,
 	tracing *tracing.TracingService,
 	unified resource.ResourceClient,
 	dual dualwrite.Service,
 	sorter sort.Service,
+	quotaService quota.Service,
 ) *DashboardsAPIBuilder {
 	softDelete := features.IsEnabledGlobally(featuremgmt.FlagDashboardRestore)
 	dbp := legacysql.NewDatabaseProvider(sql)
@@ -99,6 +117,11 @@ func RegisterAPIService(
 		unified:                      unified,
 		dashboardProvisioningService: provisioningDashboardService,
 		search:                       NewSearchHandler(tracing, dual, legacyDashboardSearcher, unified, features),
+		dashStore:                    dashStore,
+		folderStore:                  folderStore,
+		QuotaService:                 quotaService,
+		ProvisioningService:          provisioning,
+		cfg:                          cfg,
 
 		legacy: &DashboardStorage{
 			Access: legacy.NewDashboardAccess(dbp, namespacer, dashStore, provisioning, softDelete, sorter),
@@ -146,51 +169,296 @@ func (b *DashboardsAPIBuilder) InstallSchema(scheme *runtime.Scheme) error {
 	return scheme.SetVersionPriority(b.GetGroupVersions()...)
 }
 
-// Validate will prevent deletion of provisioned dashboards, unless the grace period is set to 0, indicating a force deletion
+// Validate validates dashboard operations for the apiserver
 func (b *DashboardsAPIBuilder) Validate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) (err error) {
 	op := a.GetOperation()
-	if op == admission.Delete {
-		obj := a.GetOperationOptions()
-		deleteOptions, ok := obj.(*metav1.DeleteOptions)
-		if !ok {
-			return fmt.Errorf("expected v1.DeleteOptions")
+
+	// Handle different operations
+	switch op {
+	case admission.Delete:
+		return b.validateDelete(ctx, a)
+	case admission.Create:
+		return b.validateCreate(ctx, a, o)
+	case admission.Update:
+		return b.validateUpdate(ctx, a, o)
+	}
+
+	return nil
+}
+
+// validateDelete checks if a dashboard can be deleted
+func (b *DashboardsAPIBuilder) validateDelete(ctx context.Context, a admission.Attributes) error {
+	obj := a.GetOperationOptions()
+	deleteOptions, ok := obj.(*metav1.DeleteOptions)
+	if !ok {
+		return fmt.Errorf("expected v1.DeleteOptions")
+	}
+
+	// Skip validation for forced deletions (grace period = 0)
+	if deleteOptions.GracePeriodSeconds != nil && *deleteOptions.GracePeriodSeconds == 0 {
+		return nil
+	}
+
+	nsInfo, err := claims.ParseNamespace(a.GetNamespace())
+	if err != nil {
+		return fmt.Errorf("%v: %w", "failed to parse namespace", err)
+	}
+
+	// The name of the resource is the dashboard UID
+	dashboardUID := a.GetName()
+
+	provisioningData, err := b.dashboardProvisioningService.GetProvisionedDashboardDataByDashboardUID(ctx, nsInfo.OrgID, dashboardUID)
+	if err != nil {
+		if errors.Is(err, dashboards.ErrProvisionedDashboardNotFound) ||
+			errors.Is(err, dashboards.ErrDashboardNotFound) ||
+			apierrors.IsNotFound(err) {
+			return nil
 		}
 
-		if deleteOptions.GracePeriodSeconds == nil || *deleteOptions.GracePeriodSeconds != 0 {
-			nsInfo, err := claims.ParseNamespace(a.GetNamespace())
-			if err != nil {
-				return fmt.Errorf("%v: %w", "failed to parse namespace", err)
-			}
+		return fmt.Errorf("%v: %w", "delete hook failed to check if dashboard is provisioned", err)
+	}
 
-			provisioningData, err := b.dashboardProvisioningService.GetProvisionedDashboardDataByDashboardUID(ctx, nsInfo.OrgID, a.GetName())
-			if err != nil {
-				if errors.Is(err, dashboards.ErrProvisionedDashboardNotFound) ||
-					errors.Is(err, dashboards.ErrDashboardNotFound) ||
-					apierrors.IsNotFound(err) {
-					return nil
-				}
+	if provisioningData != nil {
+		return apierrors.NewBadRequest(dashboards.ErrDashboardCannotDeleteProvisionedDashboard.Reason)
+	}
 
-				return fmt.Errorf("%v: %w", "delete hook failed to check if dashboard is provisioned", err)
-			}
+	return nil
+}
 
-			if provisioningData != nil {
-				return apierrors.NewBadRequest(dashboards.ErrDashboardCannotDeleteProvisionedDashboard.Reason)
-			}
+// validateCreate validates dashboard creation
+func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
+	// Get the dashboard object
+	dash, ok := a.GetObject().(*v1alpha1.Dashboard)
+	if !ok {
+		return fmt.Errorf("expected Dashboard object")
+	}
+
+	// Parse namespace for orgID
+	nsInfo, err := claims.ParseNamespace(a.GetNamespace())
+	if err != nil {
+		return fmt.Errorf("failed to parse namespace: %w", err)
+	}
+
+	accessor, err := utils.MetaAccessor(dash)
+	if err != nil {
+		return fmt.Errorf("error getting meta accessor: %w", err)
+	}
+
+	// Basic validations
+	if err := b.validateBasicProperties(dash, &accessor); err != nil {
+		return err
+	}
+
+	// Check for UID uniqueness
+	if dash.Name != "" {
+		existing, err := b.dashStore.GetDashboard(ctx, &dashboards.GetDashboardQuery{
+			UID:   dash.Name,
+			OrgID: nsInfo.OrgID,
+		})
+		if err == nil && existing != nil {
+			return dashboards.ErrDashboardWithSameUIDExists
+		} else if err != nil && !errors.Is(err, dashboards.ErrDashboardNotFound) {
+			return fmt.Errorf("error checking dashboard UID uniqueness: %w", err)
 		}
 	}
 
-	// For create, check quota
-	if op == admission.Create && b.quotaService != nil {
-		// Check if dashboard quota has been reached
-		scopeParams := &quota.ScopeParameters{
-			OrgID: nsInfo.OrgID,
+	// Validate folder existence if specified
+	if accessor.GetFolder() != "" {
+		if err := b.validateFolderExists(ctx, accessor.GetFolder(), nsInfo.OrgID); err != nil {
+			return err
 		}
-		quotaReached, err := b.quotaService.CheckQuotaReached(ctx, dashboards.QuotaTargetSrv, scopeParams)
-		if err != nil {
-			return fmt.Errorf("failed to check dashboard quota: %w", err)
+	}
+
+	// Validate refresh interval
+	if err := b.validateRefreshInterval(dash); err != nil {
+		return err
+	}
+
+	// TODO: Can there be cases where nobody is signed in?
+	id, err := identity.GetRequester(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting requester: %w", err)
+	}
+
+	// Validate quota
+	params := &quota.ScopeParameters{}
+	params.OrgID = id.GetOrgID()
+	userID, err := identity.UserIdentifier(id.GetID())
+	if err != nil {
+		return fmt.Errorf("error getting user ID: %w", err)
+	}
+	params.UserID = userID
+
+	quotaReached, err := b.QuotaService.CheckQuotaReached(ctx, dashboards.QuotaTargetSrv, params)
+	if err != nil {
+		return fmt.Errorf("error checking quota: %w", err)
+	}
+	if quotaReached {
+		return fmt.Errorf("dashboard quota reached") // TODO: Add a more specific error message as before
+	}
+
+	return nil
+}
+
+// validateUpdate validates dashboard updates
+func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
+	// Get the new and old dashboards
+	newDash, ok := a.GetObject().(*v1alpha1.Dashboard)
+	if !ok {
+		return fmt.Errorf("expected Dashboard object")
+	}
+
+	oldDash, ok := a.GetOldObject().(*v1alpha1.Dashboard)
+	if !ok {
+		return fmt.Errorf("expected Dashboard object for old object")
+	}
+
+	oldAccessor, err := utils.MetaAccessor(oldDash)
+	if err != nil {
+		return fmt.Errorf("error getting meta accessor: %w", err)
+	}
+
+	newAccessor, err := utils.MetaAccessor(newDash)
+	if err != nil {
+		return fmt.Errorf("error getting meta accessor: %w", err)
+	}
+
+	// Parse namespace for orgID
+	nsInfo, err := claims.ParseNamespace(a.GetNamespace())
+	if err != nil {
+		return fmt.Errorf("failed to parse namespace: %w", err)
+	}
+
+	// Basic validations
+	if err := b.validateBasicProperties(newDash, &newAccessor); err != nil {
+		return err
+	}
+
+	// Validate folder existence if specified and changed
+	if newAccessor.GetFolder() != "" && newAccessor.GetFolder() != oldAccessor.GetFolder() {
+		if err := b.validateFolderExists(ctx, newAccessor.GetFolder(), nsInfo.OrgID); err != nil {
+			return err
 		}
-		if quotaReached {
-			return fmt.Errorf("dashboard quota reached")
+	}
+
+	// Validate refresh interval
+	if err := b.validateRefreshInterval(newDash); err != nil {
+		return err
+	}
+
+	// Check for provisioning - disallow updates to provisioned dashboards if not allowed
+	if err := b.validateProvisionedDashboardUpdate(ctx, newDash.Name, nsInfo.OrgID); err != nil {
+		return err
+	}
+
+	// Validate version conflicts
+	if oldDash.Spec.GetNestedInt64(DASHBOARD_SPEC_VERSION) > newDash.Spec.GetNestedInt64(DASHBOARD_SPEC_VERSION) {
+		return dashboards.ErrDashboardVersionMismatch
+	}
+
+	return nil
+}
+
+// validateBasicProperties validates basic dashboard properties
+func (b *DashboardsAPIBuilder) validateBasicProperties(dash *v1alpha1.Dashboard, accessor *utils.GrafanaMetaAccessor) error {
+	// Validate title
+	if dash.Spec.GetNestedString(DASHBOARD_SPEC_TITLE) == "" {
+		return fmt.Errorf("dashboard title cannot be empty")
+	}
+
+	if len(dash.Spec.GetNestedString(DASHBOARD_SPEC_TITLE)) > 5000 {
+		return fmt.Errorf("dashboard title is too long (max 5000 characters)")
+	}
+
+	// Validate UID
+	if dash.Name != "" {
+		// Check UID length
+		if len(dash.Name) > 40 { // TODO: Set correct length
+			return fmt.Errorf("dashboard UID is too long (max 40 characters)")
+		}
+
+		// Check valid UID format using regex
+		uidPattern := regexp.MustCompile(`^[a-zA-Z0-9\-\_]+$`) // TODO: Make const outside
+		if !uidPattern.MatchString(dash.Name) {
+			return fmt.Errorf("dashboard UID can only contain alphanumeric characters, dashes and underscores")
+		}
+	}
+
+	// Validate message
+	if message := (*accessor).GetMessage(); message != "" && len(message) > 500 {
+		return fmt.Errorf("dashboard update message is too long (max 500 characters)")
+	}
+
+	return nil
+}
+
+// validateFolderExists checks if a folder exists
+func (b *DashboardsAPIBuilder) validateFolderExists(ctx context.Context, folderUID string, orgID int64) error {
+	_, err := b.folderStore.Get(ctx, folderUID, &metav1.GetOptions{})
+	// TODO: Consider replacing with list exact operation.
+
+	if err != nil {
+		if errors.Is(err, dashboards.ErrFolderNotFound) {
+			return fmt.Errorf("folder with UID %s not found", folderUID)
+		}
+		return fmt.Errorf("error checking folder existence: %w", err)
+	}
+
+	return nil
+}
+
+// validateRefreshInterval validates dashboard refresh interval
+func (b *DashboardsAPIBuilder) validateRefreshInterval(dash *v1alpha1.Dashboard) error {
+	// Get refresh value from data
+	refresh := dash.Spec.GetNestedString(DASHBOARD_SPEC_REFRESH_INTERVAL)
+
+	if refresh == "" || refresh == "auto" {
+		return nil
+	}
+
+	// Skip validation for disabled refresh
+	if refresh == "0" || strings.ToLower(refresh) == "off" {
+		return nil
+	}
+
+	minRefreshInterval := b.cfg.MinRefreshInterval
+	if minRefreshInterval == "" {
+		return nil
+	}
+
+	minInterval, err := time.ParseDuration(minRefreshInterval)
+	if err != nil {
+		return fmt.Errorf("invalid min refresh interval format: %s", minRefreshInterval)
+	}
+
+	refreshInterval, err := time.ParseDuration(refresh)
+	if err != nil {
+		return fmt.Errorf("invalid refresh interval format: %s", refresh)
+	}
+
+	if refreshInterval < minInterval {
+		return fmt.Errorf("refresh interval cannot be less than %s", minRefreshInterval)
+	}
+
+	return nil
+}
+
+// validateProvisionedDashboardUpdate checks if a provisioned dashboard can be updated
+func (b *DashboardsAPIBuilder) validateProvisionedDashboardUpdate(ctx context.Context, dashboardUID string, orgID int64) error {
+	provisioningData, err := b.dashboardProvisioningService.GetProvisionedDashboardDataByDashboardUID(ctx, orgID, dashboardUID)
+	if err != nil {
+		if errors.Is(err, dashboards.ErrProvisionedDashboardNotFound) ||
+			errors.Is(err, dashboards.ErrDashboardNotFound) ||
+			apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("error checking dashboard provisioning status: %w", err)
+	}
+
+	if provisioningData != nil {
+		allowUIUpdate := b.ProvisioningService.GetAllowUIUpdatesFromConfig(provisioningData.Name)
+		if !allowUIUpdate {
+			return dashboards.ErrDashboardCannotSaveProvisionedDashboard
 		}
 	}
 

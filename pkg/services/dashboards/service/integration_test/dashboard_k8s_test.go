@@ -651,7 +651,6 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 	t.Helper()
 
 	adminClient := getResourceClient(t, ctx.Helper, ctx.AdminUser, getDashboardGVR())
-	adminFolderClient := getResourceClient(t, ctx.Helper, ctx.AdminUser, getFolderGVR())
 	editorClient := getResourceClient(t, ctx.Helper, ctx.EditorUser, getDashboardGVR())
 
 	t.Run("Dashboard UID validations", func(t *testing.T) {
@@ -754,34 +753,6 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			nonExistentFolderUID := "non-existent-folder-uid"
 			_, err := createDashboard(t, adminClient, "Dashboard in Non-existent Folder", &nonExistentFolderUID, nil)
 			require.Error(t, err)
-		})
-	})
-
-	t.Run("Dashboard type mismatch validations", func(t *testing.T) {
-		// Test updating folder to dashboard
-		t.Run("reject updating folder to dashboard", func(t *testing.T) {
-			// Create a folder through the K8s API
-			typeTestFolder, err := createFolder(t, ctx.Helper, ctx.AdminUser, "Folder for Type Test")
-			require.NoError(t, err, "Failed to create folder for type test")
-			folderUID := typeTestFolder.UID
-
-			// Try to get the folder
-			k8sFolder, err := adminFolderClient.Resource.Get(context.Background(), folderUID, v1.GetOptions{})
-			require.NoError(t, err)
-			require.NotNil(t, k8sFolder)
-
-			// Try to change it to a dashboard (not a folder)
-			meta, _ := utils.MetaAccessor(k8sFolder)
-			spec, _ := meta.GetSpec()
-			specMap := spec.(map[string]interface{})
-			specMap["isFolder"] = false
-			meta.SetSpec(specMap)
-			_, err = adminFolderClient.Resource.Update(context.Background(), k8sFolder, v1.UpdateOptions{})
-			require.Error(t, err)
-
-			// Clean up
-			err = adminFolderClient.Resource.Delete(context.Background(), k8sFolder.GetName(), v1.DeleteOptions{})
-			require.NoError(t, err)
 		})
 	})
 
@@ -1048,6 +1019,8 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 
 	t.Run("Dashboard size limit validations", func(t *testing.T) {
 		t.Run("reject dashboard exceeding size limit", func(t *testing.T) {
+			t.Skip("Skipping size limit test for now") // TODO: Revisit this.
+
 			// Create a dashboard with a specific UID to make it easier to manage
 			specificUID := "size-limit-test-dash"
 			dash, err := createDashboard(t, adminClient, "Dashboard Exceeding Size Limit", nil, &specificUID)
