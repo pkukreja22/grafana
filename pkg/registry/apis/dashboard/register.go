@@ -170,6 +170,23 @@ func (b *DashboardsAPIBuilder) InstallSchema(scheme *runtime.Scheme) error {
 
 // Validate validates dashboard operations for the apiserver
 func (b *DashboardsAPIBuilder) Validate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) (err error) {
+	// First validate that the namespace belongs to the requester's org
+	nsInfo, err := claims.ParseNamespace(a.GetNamespace())
+	if err != nil {
+		return fmt.Errorf("failed to parse namespace: %w", err)
+	}
+
+	// Validate requester's organization context
+	id, err := identity.GetRequester(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting requester: %w", err)
+	}
+
+	// Validate organization access
+	if id.GetOrgID() != nsInfo.OrgID {
+		return apierrors.NewNotFound(a.GetResource().GroupResource(), a.GetName())
+	}
+
 	op := a.GetOperation()
 
 	// Handle different operations
@@ -273,7 +290,12 @@ func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.A
 		return err
 	}
 
-	// TODO: Can there be cases where nobody is signed in?
+	// Check if dashboard is provisioned and if it allows updates
+	//mgr, hasMgr := accessor.GetManagerProperties()
+	//if hasMgr && mgr.Identity != "" && !mgr.AllowsEdits {
+	//	return dashboards.ErrDashboardCannotSaveProvisionedDashboard
+	//}
+
 	id, err := identity.GetRequester(ctx)
 	if err != nil {
 		return fmt.Errorf("error getting requester: %w", err)
@@ -290,7 +312,11 @@ func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.A
 
 	quotaReached, err := b.QuotaService.CheckQuotaReached(ctx, dashboards.QuotaTargetSrv, params)
 	if err != nil {
-		return fmt.Errorf("error checking quota: %w", err)
+		// Ignore quota disabled errors
+		// TODO: Research
+		if !strings.Contains(err.Error(), "quota.disabled") {
+			return fmt.Errorf("error checking quota: %w", err)
+		}
 	}
 	if quotaReached {
 		return fmt.Errorf("dashboard quota reached") // TODO: Add a more specific error message as before
@@ -322,10 +348,21 @@ func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.A
 		return fmt.Errorf("error getting meta accessor: %w", err)
 	}
 
-	// Parse namespace for orgID
-	nsInfo, err := claims.ParseNamespace(a.GetNamespace())
+	// Parse namespace for old dashboard
+	nsInfo, err := claims.ParseNamespace(oldAccessor.GetNamespace())
 	if err != nil {
 		return fmt.Errorf("failed to parse namespace: %w", err)
+	}
+
+	// Validate requester's organization context
+	id, err := identity.GetRequester(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting requester: %w", err)
+	}
+
+	// Validate organization access
+	if id.GetOrgID() != nsInfo.OrgID {
+		return apierrors.NewNotFound(a.GetResource().GroupResource(), a.GetName())
 	}
 
 	// Basic validations
@@ -436,7 +473,7 @@ func (b *DashboardsAPIBuilder) validateRefreshInterval(dash *v1alpha1.Dashboard)
 	}
 
 	if refreshInterval < minInterval {
-		return fmt.Errorf("refresh interval cannot be less than %s", minRefreshInterval)
+		return dashboards.ErrDashboardRefreshIntervalTooShort
 	}
 
 	return nil
@@ -454,12 +491,15 @@ func (b *DashboardsAPIBuilder) validateProvisionedDashboardUpdate(ctx context.Co
 		return fmt.Errorf("error checking dashboard provisioning status: %w", err)
 	}
 
+	// Found provisioning data - check if dashboard is explicitly provisioned as not allowing edits
 	if provisioningData != nil {
 		allowUIUpdate := b.ProvisioningService.GetAllowUIUpdatesFromConfig(provisioningData.Name)
 		if !allowUIUpdate {
 			return dashboards.ErrDashboardCannotSaveProvisionedDashboard
 		}
 	}
+
+	// TODO: Check overwrite flag
 
 	return nil
 }
@@ -476,6 +516,7 @@ func (b *DashboardsAPIBuilder) UpdateAPIGroupInfo(apiGroupInfo *genericapiserver
 		largeObjects = NewDashboardLargeObjectSupport(opts.Scheme)
 		storageOpts.LargeObjectSupport = largeObjects
 	}
+
 	opts.StorageOptions(v0alpha1.DashboardResourceInfo.GroupResource(), storageOpts)
 
 	// v0alpha1
