@@ -29,6 +29,16 @@ jest.mock('app/features/plugins/pluginSettings', () => ({
   getPluginSettings: () => Promise.resolve({ info: { version: '1.0.0' } }),
 }));
 
+jest.mock('./logs/log', () => {
+  const { createLogMock } = jest.requireActual('./logs/testUtils');
+  const original = jest.requireActual('./logs/log');
+
+  return {
+    ...original,
+    log: createLogMock(),
+  };
+});
+
 describe('Plugin Extensions / Utils', () => {
   describe('deepFreeze()', () => {
     test('should not fail when called with primitive values', () => {
@@ -375,14 +385,6 @@ describe('Plugin Extensions / Utils', () => {
   });
 
   describe('getMutationObserverProxy()', () => {
-    beforeEach(() => {
-      jest.spyOn(console, 'warn').mockImplementation();
-    });
-
-    afterEach(() => {
-      jest.mocked(console.warn).mockClear();
-    });
-
     it('should not be possible to modify values in proxied object, but logs a warning', () => {
       const proxy = getMutationObserverProxy({ a: 'a' });
 
@@ -390,10 +392,9 @@ describe('Plugin Extensions / Utils', () => {
         proxy.a = 'b';
       }).not.toThrow();
 
-      expect(console.warn).toHaveBeenCalledWith(
-        `Extensions: Attempted to mutate object property "a"`,
-        expect.any(String) // The stack trace
-      );
+      expect(log.warning).toHaveBeenCalledWith(`Attempted to mutate object property "a"`, {
+        stack: expect.any(String),
+      });
 
       expect(proxy.a).toBe('b');
     });
@@ -409,10 +410,9 @@ describe('Plugin Extensions / Utils', () => {
         });
       }).not.toThrow();
 
-      expect(console.warn).toHaveBeenCalledWith(
-        `Extensions: Attempted to define object property "b"`,
-        expect.any(String) // The stack trace
-      );
+      expect(log.warning).toHaveBeenCalledWith(`Attempted to define object property "b"`, {
+        stack: expect.any(String),
+      });
 
       expect(proxy.b).toBe('b');
     });
@@ -430,10 +430,9 @@ describe('Plugin Extensions / Utils', () => {
         delete proxy.a.c;
       }).not.toThrow();
 
-      expect(console.warn).toHaveBeenCalledWith(
-        `Extensions: Attempted to delete object property "c"`,
-        expect.any(String) // The stack trace
-      );
+      expect(log.warning).toHaveBeenCalledWith(`Attempted to delete object property "c"`, {
+        stack: expect.any(String),
+      });
 
       expect(proxy.a.c).toBeUndefined();
     });
@@ -528,10 +527,9 @@ describe('Plugin Extensions / Utils', () => {
         copy.a = 'b';
       }).not.toThrow();
 
-      expect(console.warn).toHaveBeenCalledWith(
-        `Extensions: Attempted to mutate object property "a"`,
-        expect.any(String) // The stack trace
-      );
+      expect(log.warning).toHaveBeenCalledWith(`Attempted to mutate object property "a"`, {
+        stack: expect.any(String),
+      });
 
       expect(copy.a).toBe('b');
     });
@@ -552,10 +550,9 @@ describe('Plugin Extensions / Utils', () => {
       expect(Object.isFrozen(copy.b)).toBe(true);
       expect(copy.b).toEqual({ c: 'c' });
 
-      expect(console.warn).toHaveBeenCalledWith(
-        `Extensions: Attempted to define object property "a"`,
-        expect.any(String) // The stack trace
-      );
+      expect(log.warning).toHaveBeenCalledWith(`Attempted to define object property "a"`, {
+        stack: expect.any(String),
+      });
     });
   });
 

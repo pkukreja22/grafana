@@ -321,13 +321,10 @@ describe('usePluginComponents()', () => {
     expect(rendered.getByText('Foo')).toBeVisible();
 
     // Should also render the component if it wants to change the props
-    jest.spyOn(console, 'warn').mockImplementation(() => {});
     expect(() => render(<Component foo={originalFoo} override />)).not.toThrow();
-    expect(console.warn).toHaveBeenCalledWith(
-      `Extensions: Attempted to mutate object property "foo4"`,
-      expect.any(String) // The stack trace
-    );
-    jest.spyOn(console, 'warn').mockRestore();
+    expect(log.warning).toHaveBeenCalledWith(`Attempted to mutate object property "foo4"`, {
+      stack: expect.any(String),
+    });
 
     // Check if the original property hasn't been changed
     expect(originalFoo.foo2.foo3.foo4).toBe('bar');

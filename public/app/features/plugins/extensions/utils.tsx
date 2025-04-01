@@ -232,7 +232,7 @@ export function getReadOnlyProxy<T extends object>(obj: T): T {
  * @param obj The object to observe
  * @returns A new proxy object that logs any attempted mutation to the original object
  */
-export function getMutationObserverProxy<T extends object>(obj: T): T {
+export function getMutationObserverProxy<T extends object>(obj: T, _log: ExtensionsLog = log): T {
   if (!obj || typeof obj !== 'object' || isMutationObserverProxy(obj)) {
     return obj;
   }
@@ -241,17 +241,23 @@ export function getMutationObserverProxy<T extends object>(obj: T): T {
 
   return new Proxy(obj, {
     deleteProperty(target, prop) {
-      console.warn(`Extensions: Attempted to delete object property "${String(prop)}"`, new Error().stack);
+      _log.warning(`Attempted to delete object property "${String(prop)}"`, {
+        stack: new Error().stack ?? '',
+      });
       delete target[prop as keyof T];
       return true;
     },
     defineProperty(target, prop, descriptor) {
-      console.warn(`Extensions: Attempted to define object property "${String(prop)}"`, new Error().stack);
+      _log.warning(`Attempted to define object property "${String(prop)}"`, {
+        stack: new Error().stack ?? '',
+      });
       Object.defineProperty(target, prop as keyof T, descriptor);
       return true;
     },
     set(target, prop, newValue) {
-      console.warn(`Extensions: Attempted to mutate object property "${String(prop)}"`, new Error().stack);
+      _log.warning(`Attempted to mutate object property "${String(prop)}"`, {
+        stack: new Error().stack ?? '',
+      });
       target[prop as keyof T] = newValue;
       return true;
     },
@@ -277,7 +283,7 @@ export function getMutationObserverProxy<T extends object>(obj: T): T {
 
       if (isObject(value) || isArray(value)) {
         if (!cache.has(value)) {
-          cache.set(value, getMutationObserverProxy(value));
+          cache.set(value, getMutationObserverProxy(value, _log));
         }
         return cache.get(value);
       }
@@ -287,7 +293,7 @@ export function getMutationObserverProxy<T extends object>(obj: T): T {
   });
 }
 
-export function readOnlyCopy<T>(value: T): T {
+export function readOnlyCopy<T>(value: T, _log: ExtensionsLog = log): T {
   // Primitive types are read-only by default
   if (!value || typeof value !== 'object') {
     return value;
@@ -303,7 +309,7 @@ export function readOnlyCopy<T>(value: T): T {
   }
 
   // Default: we return a proxy of a deep-cloned version of the original object, which logs warnings when mutation is attempted
-  return getMutationObserverProxy(cloneDeep(value));
+  return getMutationObserverProxy(cloneDeep(value), _log);
 }
 
 function isRecord(value: unknown): value is Record<string | number | symbol, unknown> {

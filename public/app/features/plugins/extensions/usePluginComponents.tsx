@@ -90,8 +90,14 @@ export function createComponentWithMeta<Props extends JSX.IntrinsicAttributes>(
   extensionPointId: string
 ): ComponentTypeWithExtensionMeta<Props> {
   const { component: Component, ...config } = registryItem;
+  const _log = log.child({
+    pluginId: config.pluginId,
+    extensionPointId,
+    title: config.title ?? '',
+    description: config.description ?? '',
+  });
   function ComponentWithMeta(props: Props) {
-    return <Component {...readOnlyCopy(props)} />;
+    return <Component {...readOnlyCopy(props, _log)} />;
   }
 
   ComponentWithMeta.displayName = Component.displayName;
