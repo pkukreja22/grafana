@@ -16,13 +16,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/admission"
+	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/spec3"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	claims "github.com/grafana/authlib/types"
+	"github.com/grafana/authlib/types"
 	internal "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard"
 	"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v0alpha1"
 	"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1alpha1"
@@ -37,6 +38,7 @@ import (
 	"github.com/grafana/grafana/pkg/registry/apis/dashboard/legacy"
 	"github.com/grafana/grafana/pkg/registry/apis/dashboard/legacysearcher"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
+	authsvc "github.com/grafana/grafana/pkg/services/apiserver/auth/authorizer"
 	"github.com/grafana/grafana/pkg/services/apiserver/builder"
 	"github.com/grafana/grafana/pkg/services/apiserver/endpoints/request"
 	"github.com/grafana/grafana/pkg/services/dashboards"
@@ -80,6 +82,7 @@ type DashboardsAPIBuilder struct {
 	QuotaService                 quota.Service
 	ProvisioningService          provisioning.ProvisioningService
 	cfg                          *setting.Cfg
+	accessClient                 types.AccessClient
 
 	log log.Logger
 	reg prometheus.Registerer
@@ -102,6 +105,7 @@ func RegisterAPIService(
 	sorter sort.Service,
 	quotaService quota.Service,
 	folderStore folder.FolderStore,
+	accessClient types.AccessClient,
 ) *DashboardsAPIBuilder {
 	softDelete := features.IsEnabledGlobally(featuremgmt.FlagDashboardRestore)
 	dbp := legacysql.NewDatabaseProvider(sql)
@@ -121,6 +125,7 @@ func RegisterAPIService(
 		QuotaService:                 quotaService,
 		ProvisioningService:          provisioning,
 		cfg:                          cfg,
+		accessClient:                 accessClient,
 
 		legacy: &DashboardStorage{
 			Access: legacy.NewDashboardAccess(dbp, namespacer, dashStore, provisioning, softDelete, sorter),
@@ -168,10 +173,14 @@ func (b *DashboardsAPIBuilder) InstallSchema(scheme *runtime.Scheme) error {
 	return scheme.SetVersionPriority(b.GetGroupVersions()...)
 }
 
+func (b *DashboardsAPIBuilder) GetAuthorizer() authorizer.Authorizer {
+	return authsvc.NewResourceAuthorizer(b.accessClient)
+}
+
 // Validate validates dashboard operations for the apiserver
 func (b *DashboardsAPIBuilder) Validate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) (err error) {
 	// First validate that the namespace belongs to the requester's org
-	nsInfo, err := claims.ParseNamespace(a.GetNamespace())
+	nsInfo, err := types.ParseNamespace(a.GetNamespace())
 	if err != nil {
 		return fmt.Errorf("failed to parse namespace: %w", err)
 	}
@@ -215,7 +224,7 @@ func (b *DashboardsAPIBuilder) validateDelete(ctx context.Context, a admission.A
 		return nil
 	}
 
-	nsInfo, err := claims.ParseNamespace(a.GetNamespace())
+	nsInfo, err := types.ParseNamespace(a.GetNamespace())
 	if err != nil {
 		return fmt.Errorf("%v: %w", "failed to parse namespace", err)
 	}
@@ -250,7 +259,7 @@ func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.A
 	}
 
 	// Parse namespace for orgID
-	nsInfo, err := claims.ParseNamespace(a.GetNamespace())
+	nsInfo, err := types.ParseNamespace(a.GetNamespace())
 	if err != nil {
 		return fmt.Errorf("failed to parse namespace: %w", err)
 	}
@@ -349,7 +358,7 @@ func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.A
 	}
 
 	// Parse namespace for old dashboard
-	nsInfo, err := claims.ParseNamespace(oldAccessor.GetNamespace())
+	nsInfo, err := types.ParseNamespace(oldAccessor.GetNamespace())
 	if err != nil {
 		return fmt.Errorf("failed to parse namespace: %w", err)
 	}
