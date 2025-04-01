@@ -9,6 +9,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/folder"
 	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/search/model"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // DashboardService is a service for operating on dashboards.
@@ -38,6 +39,8 @@ type DashboardService interface {
 	CleanUpDeletedDashboards(ctx context.Context) (int64, error)
 	GetSoftDeletedDashboard(ctx context.Context, orgID int64, uid string) (*Dashboard, error)
 	CountDashboardsInOrg(ctx context.Context, orgID int64) (int64, error)
+	SetDefaultPermissions(ctx context.Context, dto *SaveDashboardDTO, dash *Dashboard, provisioned bool)
+	UnstructuredToLegacyDashboard(ctx context.Context, item *unstructured.Unstructured, orgID int64) (*Dashboard, error)
 }
 
 type PermissionsRegistrationService interface {

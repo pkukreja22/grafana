@@ -38,7 +38,6 @@ import (
 	"github.com/grafana/grafana/pkg/registry/apis/dashboard/legacy"
 	"github.com/grafana/grafana/pkg/registry/apis/dashboard/legacysearcher"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
-	authsvc "github.com/grafana/grafana/pkg/services/apiserver/auth/authorizer"
 	"github.com/grafana/grafana/pkg/services/apiserver/builder"
 	"github.com/grafana/grafana/pkg/services/apiserver/endpoints/request"
 	"github.com/grafana/grafana/pkg/services/dashboards"
@@ -83,6 +82,7 @@ type DashboardsAPIBuilder struct {
 	ProvisioningService          provisioning.ProvisioningService
 	cfg                          *setting.Cfg
 	accessClient                 types.AccessClient
+	dualWriter                   dualwrite.Service
 
 	log log.Logger
 	reg prometheus.Registerer
@@ -126,9 +126,11 @@ func RegisterAPIService(
 		ProvisioningService:          provisioning,
 		cfg:                          cfg,
 		accessClient:                 accessClient,
+		dualWriter:                   dual,
 
 		legacy: &DashboardStorage{
-			Access: legacy.NewDashboardAccess(dbp, namespacer, dashStore, provisioning, softDelete, sorter),
+			Access:           legacy.NewDashboardAccess(dbp, namespacer, dashStore, provisioning, softDelete, sorter),
+			DashboardService: &dashboardService,
 		},
 		reg: reg,
 	}
@@ -174,7 +176,9 @@ func (b *DashboardsAPIBuilder) InstallSchema(scheme *runtime.Scheme) error {
 }
 
 func (b *DashboardsAPIBuilder) GetAuthorizer() authorizer.Authorizer {
-	return authsvc.NewResourceAuthorizer(b.accessClient)
+	// TODO: This can be removed once we're fully switched to unified storage
+	// as it will take care of authorizations
+	return GetAuthorizer(b.dashboardService, b.dualWriter, b.log)
 }
 
 // Validate validates dashboard operations for the apiserver

@@ -972,7 +972,7 @@ func (dr *DashboardServiceImpl) SaveProvisionedDashboard(ctx context.Context, dt
 	}
 
 	if dto.Dashboard.ID == 0 {
-		dr.setDefaultPermissions(ctx, dto, dash, true)
+		dr.SetDefaultPermissions(ctx, dto, dash, true)
 	}
 
 	return dash, nil
@@ -1022,7 +1022,7 @@ func (dr *DashboardServiceImpl) SaveDashboard(ctx context.Context, dto *dashboar
 
 	// new dashboard created
 	if dto.Dashboard.ID == 0 {
-		dr.setDefaultPermissions(ctx, dto, dash, false)
+		dr.SetDefaultPermissions(ctx, dto, dash, false)
 	}
 
 	return dash, nil
@@ -1186,7 +1186,7 @@ func (dr *DashboardServiceImpl) ImportDashboard(ctx context.Context, dto *dashbo
 		return nil, err
 	}
 
-	dr.setDefaultPermissions(ctx, dto, dash, false)
+	dr.SetDefaultPermissions(ctx, dto, dash, false)
 
 	return dash, nil
 }
@@ -1252,7 +1252,7 @@ func (dr *DashboardServiceImpl) GetDashboardsByPluginID(ctx context.Context, que
 	return dr.dashboardStore.GetDashboardsByPluginID(ctx, query)
 }
 
-func (dr *DashboardServiceImpl) setDefaultPermissions(ctx context.Context, dto *dashboards.SaveDashboardDTO, dash *dashboards.Dashboard, provisioned bool) {
+func (dr *DashboardServiceImpl) SetDefaultPermissions(ctx context.Context, dto *dashboards.SaveDashboardDTO, dash *dashboards.Dashboard, provisioned bool) {
 	ctx, span := tracer.Start(ctx, "dashboards.service.setDefaultPermissions")
 	defer span.End()
 
