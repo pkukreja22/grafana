@@ -292,22 +292,22 @@ func (a *accessControlFolderGuardian) CanDelete() (bool, error) {
 	return a.evaluate(accesscontrol.EvalPermission(dashboards.ActionFoldersDelete, dashboards.ScopeFoldersProvider.GetResourceScopeUID(a.folder.UID)))
 }
 
-func (a *accessControlDashboardGuardian) CanCreate(folderID int64, isFolder bool) (bool, error) {
+func (a *accessControlDashboardGuardian) CanCreate(folderUID string, isFolder bool) (bool, error) {
 	if isFolder {
 		return a.evaluate(accesscontrol.EvalPermission(dashboards.ActionFoldersCreate))
 	}
-	folder, err := a.loadParentFolder(folderID)
+	folder, err := a.loadParentFolder(folderUID)
 	if err != nil {
 		return false, err
 	}
 	return a.evaluate(accesscontrol.EvalPermission(dashboards.ActionDashboardsCreate, dashboards.ScopeFoldersProvider.GetResourceScopeUID(folder.UID)))
 }
 
-func (a *accessControlFolderGuardian) CanCreate(folderID int64, isFolder bool) (bool, error) {
+func (a *accessControlFolderGuardian) CanCreate(folderUID string, isFolder bool) (bool, error) {
 	if isFolder {
 		return a.evaluate(accesscontrol.EvalPermission(dashboards.ActionFoldersCreate))
 	}
-	folder, err := a.loadParentFolder(folderID)
+	folder, err := a.loadParentFolder(folderUID)
 	if err != nil {
 		return false, err
 	}
@@ -360,11 +360,11 @@ func (a *accessControlFolderGuardian) evaluate(evaluator accesscontrol.Evaluator
 	return ok, err
 }
 
-func (a *accessControlDashboardGuardian) loadParentFolder(folderID int64) (*folder.Folder, error) {
-	if folderID == 0 {
+func (a *accessControlDashboardGuardian) loadParentFolder(folderUID string) (*folder.Folder, error) {
+	if folderUID == "" {
 		return &folder.Folder{UID: accesscontrol.GeneralFolderUID, OrgID: a.user.GetOrgID()}, nil
 	}
-	folderQuery := &folder.GetFolderQuery{ID: &folderID, OrgID: a.user.GetOrgID(), SignedInUser: a.user}
+	folderQuery := &folder.GetFolderQuery{UID: &folderUID, OrgID: a.user.GetOrgID(), SignedInUser: a.user}
 	folderQueryResult, err := a.folderService.Get(a.ctx, folderQuery)
 	if err != nil {
 		return nil, err
@@ -372,11 +372,11 @@ func (a *accessControlDashboardGuardian) loadParentFolder(folderID int64) (*fold
 	return folderQueryResult, nil
 }
 
-func (a *accessControlFolderGuardian) loadParentFolder(folderID int64) (*folder.Folder, error) {
-	if folderID == 0 {
+func (a *accessControlFolderGuardian) loadParentFolder(folderUID string) (*folder.Folder, error) {
+	if folderUID == "" {
 		return &folder.Folder{UID: accesscontrol.GeneralFolderUID, OrgID: a.user.GetOrgID()}, nil
 	}
-	folderQuery := &folder.GetFolderQuery{ID: &folderID, OrgID: a.user.GetOrgID(), SignedInUser: a.user}
+	folderQuery := &folder.GetFolderQuery{UID: &folderUID, OrgID: a.user.GetOrgID(), SignedInUser: a.user}
 	folderQueryResult, err := a.folderService.Get(a.ctx, folderQuery)
 	if err != nil {
 		return nil, err

@@ -25,7 +25,7 @@ type DashboardGuardian interface {
 	CanView() (bool, error)
 	CanAdmin() (bool, error)
 	CanDelete() (bool, error)
-	CanCreate(folderID int64, isFolder bool) (bool, error)
+	CanCreate(folderUID string, isFolder bool) (bool, error)
 }
 
 // New factory for creating a new dashboard guardian instance
@@ -96,7 +96,7 @@ func (g *FakeDashboardGuardian) CanDelete() (bool, error) {
 	return g.CanSaveValue, nil
 }
 
-func (g *FakeDashboardGuardian) CanCreate(_ int64, _ bool) (bool, error) {
+func (g *FakeDashboardGuardian) CanCreate(_ string, _ bool) (bool, error) {
 	return g.CanSaveValue, nil
 }
 

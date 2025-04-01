@@ -1370,7 +1370,7 @@ func (s *Service) buildSaveDashboardCommand(ctx context.Context, dto *dashboards
 	if dash.ID == 0 {
 		metrics.MFolderIDsServiceCount.WithLabelValues(metrics.Folder).Inc()
 		// nolint:staticcheck
-		if canCreate, err := guard.CanCreate(dash.FolderID, dash.IsFolder); err != nil || !canCreate {
+		if canCreate, err := guard.CanCreate(dash.FolderUID, dash.IsFolder); err != nil || !canCreate {
 			if err != nil {
 				return nil, err
 			}

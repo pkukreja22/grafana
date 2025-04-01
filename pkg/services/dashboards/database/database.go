@@ -30,6 +30,9 @@ import (
 	"github.com/grafana/grafana/pkg/services/tag"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/util"
+
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
+	"github.com/grafana/grafana/pkg/services/guardian"
 )
 
 var tracer = otel.Tracer("github.com/grafana/grafana/pkg/services/dashboard/database")
@@ -187,7 +190,7 @@ func (d *dashboardStore) SaveProvisionedDashboard(ctx context.Context, cmd dashb
 	var result *dashboards.Dashboard
 	var err error
 	err = d.store.WithTransactionalDbSession(ctx, func(sess *db.Session) error {
-		result, err = saveDashboard(sess, &cmd, d.emitEntityEvent())
+		result, err = saveDashboard(ctx, sess, &cmd, d.emitEntityEvent())
 		if err != nil {
 			return err
 		}
@@ -208,7 +211,7 @@ func (d *dashboardStore) SaveDashboard(ctx context.Context, cmd dashboards.SaveD
 	var result *dashboards.Dashboard
 	var err error
 	err = d.store.WithTransactionalDbSession(ctx, func(sess *db.Session) error {
-		result, err = saveDashboard(sess, &cmd, d.emitEntityEvent())
+		result, err = saveDashboard(ctx, sess, &cmd, d.emitEntityEvent())
 		if err != nil {
 			return err
 		}
@@ -399,13 +402,33 @@ func getExistingDashboardByIDOrUIDForUpdate(sess *db.Session, dash *dashboards.D
 	return isParentFolderChanged, nil
 }
 
-func saveDashboard(sess *db.Session, cmd *dashboards.SaveDashboardCommand, emitEntityEvent bool) (*dashboards.Dashboard, error) {
+func saveDashboard(ctx context.Context, sess *db.Session, cmd *dashboards.SaveDashboardCommand, emitEntityEvent bool) (*dashboards.Dashboard, error) {
 	dash := cmd.GetDashboardModel()
 
 	userId := cmd.UserID
 
 	if userId == 0 {
 		userId = -1
+	}
+
+	var err error
+
+	user, err := identity.GetRequester(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var ok bool
+	guardian, err := guardian.NewByDashboard(ctx, dash, dash.OrgID, user)
+	if dash.ID > 0 {
+		ok, err = guardian.CanSave() // vs Edit?
+	} else {
+		ok, err = guardian.CanCreate(dash.FolderUID, dash.IsFolder) // vs Save
+	}
+	if err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, dashboards.ErrDashboardUpdateAccessDenied
 	}
 
 	// we don't save FolderID in kubernetes object when saving through k8s
@@ -453,7 +476,6 @@ func saveDashboard(sess *db.Session, cmd *dashboards.SaveDashboardCommand, emitE
 
 	parentVersion := dash.Version
 	var affectedRows int64
-	var err error
 
 	if dash.ID == 0 {
 		dash.SetVersion(1)

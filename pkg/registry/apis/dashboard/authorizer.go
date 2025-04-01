@@ -16,22 +16,31 @@ import (
 func GetAuthorizer(dashboardService dashboards.DashboardService, dualWriter dualwrite.Service, l log.Logger) authorizer.Authorizer {
 	return authorizer.AuthorizerFunc(
 		func(ctx context.Context, attr authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
+			// Note that we will return Allow more than expected.
+			// This is because we do NOT want to hit the RoleAuthorizer that would be evaluated afterwards.
+
 			// Check if we're reading from legacy dashboards and folders
 			isReadingLegacy := dualwrite.IsReadingLegacyDashboardsAndFolders(ctx, dualWriter)
 			if !isReadingLegacy {
-				return authorizer.DecisionNoOpinion, "relying on unified storage for access control", nil
+				return authorizer.DecisionAllow, "relying on unified storage for access control", nil
 			}
 
 			// This authorizer is only used for mode 0 to 2. Mode 3 onwards, unified storage handles access control.
 
 			// Use the standard authorizer
 			if !attr.IsResourceRequest() {
+				// TODO: When is this used?
 				return authorizer.DecisionNoOpinion, "", nil
 			}
 
 			user, err := identity.GetRequester(ctx)
 			if err != nil {
 				return authorizer.DecisionDeny, "", err
+			}
+
+			if attr.GetVerb() == "create" {
+				// Permissions will be handled downstream
+				return authorizer.DecisionAllow, "", nil
 			}
 
 			// Allow search and list requests
@@ -70,18 +79,7 @@ func GetAuthorizer(dashboardService dashboards.DashboardService, dualWriter dual
 				if !ok || err != nil {
 					return authorizer.DecisionDeny, "can not view dashboard", err
 				}
-			case "create":
-				fallthrough
-			case "post":
-				ok, err = guardian.CanSave() // vs Edit?
-				if !ok || err != nil {
-					return authorizer.DecisionDeny, "can not save dashboard", err
-				}
 			case "update":
-				fallthrough
-			case "patch":
-				fallthrough
-			case "put":
 				ok, err = guardian.CanEdit() // vs Save
 				if !ok || err != nil {
 					return authorizer.DecisionDeny, "can not edit dashboard", err
