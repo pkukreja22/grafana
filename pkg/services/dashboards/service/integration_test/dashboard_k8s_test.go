@@ -734,7 +734,7 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 	})
 
 	t.Run("Dashboard provisioning validations", func(t *testing.T) {
-		t.Skip("Double check expected behavior")
+		t.Skip("TODO: We need to create provisioned dashboards in two different ways to test this")
 		// Test updating provisioned dashboard
 		testCases := []struct {
 			name          string

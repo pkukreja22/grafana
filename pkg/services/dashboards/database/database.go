@@ -405,30 +405,27 @@ func getExistingDashboardByIDOrUIDForUpdate(sess *db.Session, dash *dashboards.D
 func saveDashboard(ctx context.Context, sess *db.Session, cmd *dashboards.SaveDashboardCommand, emitEntityEvent bool) (*dashboards.Dashboard, error) {
 	dash := cmd.GetDashboardModel()
 
-	userId := cmd.UserID
-
-	if userId == 0 {
-		userId = -1
-	}
-
 	var err error
 
 	user, err := identity.GetRequester(ctx)
-	if err != nil {
-		return nil, err
-	}
+	if err == nil {
+		// Only check access if we are operating in a context that has a user session
+		var ok bool
+		guardian, err := guardian.NewByDashboard(ctx, dash, dash.OrgID, user)
+		if err != nil {
+			return nil, err
+		}
 
-	var ok bool
-	guardian, err := guardian.NewByDashboard(ctx, dash, dash.OrgID, user)
-	if dash.ID > 0 {
-		ok, err = guardian.CanSave() // vs Edit?
-	} else {
-		ok, err = guardian.CanCreate(dash.FolderUID, dash.IsFolder) // vs Save
-	}
-	if err != nil {
-		return nil, err
-	} else if !ok {
-		return nil, dashboards.ErrDashboardUpdateAccessDenied
+		if dash.ID > 0 {
+			ok, err = guardian.CanSave() // vs Edit?
+		} else {
+			ok, err = guardian.CanCreate(dash.FolderUID, dash.IsFolder) // vs Save
+		}
+		if err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, dashboards.ErrDashboardUpdateAccessDenied
+		}
 	}
 
 	// we don't save FolderID in kubernetes object when saving through k8s
@@ -480,9 +477,8 @@ func saveDashboard(ctx context.Context, sess *db.Session, cmd *dashboards.SaveDa
 	if dash.ID == 0 {
 		dash.SetVersion(1)
 		dash.Created = time.Now()
-		dash.CreatedBy = userId
+		dash.CreatedBy = dash.UpdatedBy
 		dash.Updated = time.Now()
-		dash.UpdatedBy = userId
 		metrics.MApiDashboardInsert.Inc()
 		affectedRows, err = sess.Nullable("folder_uid").Insert(dash)
 	} else {
@@ -493,8 +489,6 @@ func saveDashboard(ctx context.Context, sess *db.Session, cmd *dashboards.SaveDa
 		} else {
 			dash.Updated = time.Now()
 		}
-
-		dash.UpdatedBy = userId
 
 		affectedRows, err = sess.MustCols("folder_id", "folder_uid").Nullable("folder_uid").ID(dash.ID).Update(dash)
 	}
