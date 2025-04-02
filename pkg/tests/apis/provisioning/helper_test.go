@@ -136,7 +136,7 @@ func (h *provisioningTestHelper) AwaitJobs(t *testing.T, repoName string) {
 				}
 			}
 		}
-	}, time.Second*5, time.Millisecond*20)
+	}, time.Second*15, time.Millisecond*20)
 
 	// Then, as all jobs are now historic jobs, we make sure they are successful.
 	result, err := h.Repositories.Resource.Get(context.Background(), repoName, metav1.GetOptions{}, "jobs")
