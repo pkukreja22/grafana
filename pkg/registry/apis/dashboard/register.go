@@ -396,7 +396,7 @@ func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.A
 	}
 
 	// Check for provisioning - disallow updates to provisioned dashboards if not allowed
-	if err := b.validateProvisionedDashboardUpdate(ctx, newDash.Name, nsInfo.OrgID); err != nil {
+	if err := b.validateProvisionedDashboardUpdate(ctx, oldDash); err != nil {
 		return err
 	}
 
@@ -493,23 +493,23 @@ func (b *DashboardsAPIBuilder) validateRefreshInterval(dash *v1alpha1.Dashboard)
 }
 
 // validateProvisionedDashboardUpdate checks if a provisioned dashboard can be updated
-func (b *DashboardsAPIBuilder) validateProvisionedDashboardUpdate(ctx context.Context, dashboardUID string, orgID int64) error {
-	provisioningData, err := b.dashboardProvisioningService.GetProvisionedDashboardDataByDashboardUID(ctx, orgID, dashboardUID)
+func (b *DashboardsAPIBuilder) validateProvisionedDashboardUpdate(ctx context.Context, oldDash *v1alpha1.Dashboard) error {
+	meta, err := utils.MetaAccessor(oldDash)
 	if err != nil {
-		if errors.Is(err, dashboards.ErrProvisionedDashboardNotFound) ||
-			errors.Is(err, dashboards.ErrDashboardNotFound) ||
-			apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("error checking dashboard provisioning status: %w", err)
+		return fmt.Errorf("error getting meta accessor: %w", err)
 	}
 
-	// Found provisioning data - check if dashboard is explicitly provisioned as not allowing edits
-	if provisioningData != nil {
-		allowUIUpdate := b.ProvisioningService.GetAllowUIUpdatesFromConfig(provisioningData.Name)
-		if !allowUIUpdate {
-			return dashboards.ErrDashboardCannotSaveProvisionedDashboard
-		}
+	manager, ok := meta.GetManagerProperties()
+	if !ok {
+		return nil
+	}
+
+	if manager.Kind == "" {
+		return nil
+	}
+
+	if !manager.AllowsEdits {
+		return dashboards.ErrDashboardCannotSaveProvisionedDashboard
 	}
 
 	// TODO: Check overwrite flag
