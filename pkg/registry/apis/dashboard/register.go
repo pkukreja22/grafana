@@ -255,9 +255,16 @@ func (b *DashboardsAPIBuilder) validateDelete(ctx context.Context, a admission.A
 // validateCreate validates dashboard creation
 func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
 	// Get the dashboard object
-	dash, ok := a.GetObject().(*v1alpha1.Dashboard)
-	if !ok {
-		return fmt.Errorf("expected Dashboard object")
+	dashObj := a.GetObject()
+
+	title, refresh, err := getDashboardProperties(dashObj)
+	if err != nil {
+		return fmt.Errorf("error extracting dashboard properties: %w", err)
+	}
+
+	accessor, err := utils.MetaAccessor(dashObj)
+	if err != nil {
+		return fmt.Errorf("error getting meta accessor: %w", err)
 	}
 
 	// Parse namespace for orgID
@@ -266,20 +273,15 @@ func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.A
 		return fmt.Errorf("failed to parse namespace: %w", err)
 	}
 
-	accessor, err := utils.MetaAccessor(dash)
-	if err != nil {
-		return fmt.Errorf("error getting meta accessor: %w", err)
-	}
-
 	// Basic validations
-	if err := b.validateBasicProperties(dash, &accessor); err != nil {
+	if err := b.validateBasicProperties(title, accessor); err != nil {
 		return err
 	}
 
 	// Check for UID uniqueness
-	if dash.Name != "" {
+	if accessor.GetName() != "" {
 		existing, err := b.dashStore.GetDashboard(ctx, &dashboards.GetDashboardQuery{
-			UID:   dash.Name,
+			UID:   accessor.GetName(),
 			OrgID: nsInfo.OrgID,
 		})
 		if err == nil && existing != nil {
@@ -297,7 +299,7 @@ func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.A
 	}
 
 	// Validate refresh interval
-	if err := b.validateRefreshInterval(dash); err != nil {
+	if err := b.validateRefreshInterval(refresh); err != nil {
 		return err
 	}
 
@@ -340,22 +342,20 @@ func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.A
 // validateUpdate validates dashboard updates
 func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
 	// Get the new and old dashboards
-	newDash, ok := a.GetObject().(*v1alpha1.Dashboard)
-	if !ok {
-		return fmt.Errorf("expected Dashboard object")
+	newDashObj := a.GetObject()
+	oldDashObj := a.GetOldObject()
+
+	title, refresh, err := getDashboardProperties(newDashObj)
+	if err != nil {
+		return fmt.Errorf("error extracting dashboard properties: %w", err)
 	}
 
-	oldDash, ok := a.GetOldObject().(*v1alpha1.Dashboard)
-	if !ok {
-		return fmt.Errorf("expected Dashboard object for old object")
-	}
-
-	oldAccessor, err := utils.MetaAccessor(oldDash)
+	oldAccessor, err := utils.MetaAccessor(oldDashObj)
 	if err != nil {
 		return fmt.Errorf("error getting meta accessor: %w", err)
 	}
 
-	newAccessor, err := utils.MetaAccessor(newDash)
+	newAccessor, err := utils.MetaAccessor(newDashObj)
 	if err != nil {
 		return fmt.Errorf("error getting meta accessor: %w", err)
 	}
@@ -378,7 +378,7 @@ func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.A
 	}
 
 	// Basic validations
-	if err := b.validateBasicProperties(newDash, &newAccessor); err != nil {
+	if err := b.validateBasicProperties(title, newAccessor); err != nil {
 		return err
 	}
 
@@ -390,12 +390,12 @@ func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.A
 	}
 
 	// Validate refresh interval
-	if err := b.validateRefreshInterval(newDash); err != nil {
+	if err := b.validateRefreshInterval(refresh); err != nil {
 		return err
 	}
 
 	// Check for provisioning - disallow updates to provisioned dashboards if not allowed
-	if err := b.validateProvisionedDashboardUpdate(ctx, oldDash); err != nil {
+	if err := b.validateProvisionedDashboardUpdate(ctx, oldAccessor); err != nil {
 		return err
 	}
 
@@ -408,32 +408,33 @@ func (b *DashboardsAPIBuilder) validateUpdate(ctx context.Context, a admission.A
 }
 
 // validateBasicProperties validates basic dashboard properties
-func (b *DashboardsAPIBuilder) validateBasicProperties(dash *v1alpha1.Dashboard, accessor *utils.GrafanaMetaAccessor) error {
+func (b *DashboardsAPIBuilder) validateBasicProperties(title string, accessor utils.GrafanaMetaAccessor) error {
 	// Validate title
-	if dash.Spec.GetNestedString(DASHBOARD_SPEC_TITLE) == "" {
+	if title == "" {
 		return fmt.Errorf("dashboard title cannot be empty")
 	}
 
-	if len(dash.Spec.GetNestedString(DASHBOARD_SPEC_TITLE)) > 5000 {
+	if len(title) > 5000 {
 		return fmt.Errorf("dashboard title is too long (max 5000 characters)")
 	}
 
-	// Validate UID
-	if dash.Name != "" {
+	// Validate UID - get it from accesso
+	uid := accessor.GetName()
+	if uid != "" {
 		// Check UID length
-		if len(dash.Name) > 40 { // TODO: Set correct length
+		if len(uid) > 40 { // TODO: Set correct length
 			return fmt.Errorf("dashboard UID is too long (max 40 characters)")
 		}
 
 		// Check valid UID format using regex
 		uidPattern := regexp.MustCompile(`^[a-zA-Z0-9\-\_]+$`) // TODO: Make const outside
-		if !uidPattern.MatchString(dash.Name) {
+		if !uidPattern.MatchString(uid) {
 			return fmt.Errorf("dashboard UID can only contain alphanumeric characters, dashes and underscores")
 		}
 	}
 
 	// Validate message
-	if message := (*accessor).GetMessage(); message != "" && len(message) > 500 {
+	if message := accessor.GetMessage(); message != "" && len(message) > 500 {
 		return fmt.Errorf("dashboard update message is too long (max 500 characters)")
 	}
 
@@ -456,10 +457,7 @@ func (b *DashboardsAPIBuilder) validateFolderExists(ctx context.Context, folderU
 }
 
 // validateRefreshInterval validates dashboard refresh interval
-func (b *DashboardsAPIBuilder) validateRefreshInterval(dash *v1alpha1.Dashboard) error {
-	// Get refresh value from data
-	refresh := dash.Spec.GetNestedString(DASHBOARD_SPEC_REFRESH_INTERVAL)
-
+func (b *DashboardsAPIBuilder) validateRefreshInterval(refresh string) error {
 	if refresh == "" || refresh == "auto" {
 		return nil
 	}
@@ -492,12 +490,7 @@ func (b *DashboardsAPIBuilder) validateRefreshInterval(dash *v1alpha1.Dashboard)
 }
 
 // validateProvisionedDashboardUpdate checks if a provisioned dashboard can be updated
-func (b *DashboardsAPIBuilder) validateProvisionedDashboardUpdate(ctx context.Context, oldDash *v1alpha1.Dashboard) error {
-	meta, err := utils.MetaAccessor(oldDash)
-	if err != nil {
-		return fmt.Errorf("error getting meta accessor: %w", err)
-	}
-
+func (b *DashboardsAPIBuilder) validateProvisionedDashboardUpdate(ctx context.Context, meta utils.GrafanaMetaAccessor) error {
 	manager, ok := meta.GetManagerProperties()
 	if !ok {
 		return nil
@@ -514,6 +507,28 @@ func (b *DashboardsAPIBuilder) validateProvisionedDashboardUpdate(ctx context.Co
 	// TODO: Check overwrite flag
 
 	return nil
+}
+
+// getDashboardProperties extracts title and refresh interval from any dashboard version
+func getDashboardProperties(obj runtime.Object) (string, string, error) {
+	var title, refresh string
+
+	// Extract properties based on the object's type
+	switch d := obj.(type) {
+	case *v0alpha1.Dashboard:
+		title = d.Spec.GetNestedString(DASHBOARD_SPEC_TITLE)
+		refresh = d.Spec.GetNestedString(DASHBOARD_SPEC_REFRESH_INTERVAL)
+	case *v1alpha1.Dashboard:
+		title = d.Spec.GetNestedString(DASHBOARD_SPEC_TITLE)
+		refresh = d.Spec.GetNestedString(DASHBOARD_SPEC_REFRESH_INTERVAL)
+	case *v2alpha1.Dashboard:
+		title = d.Spec.Title
+		refresh = d.Spec.TimeSettings.AutoRefresh
+	default:
+		return "", "", fmt.Errorf("unsupported dashboard version: %T", obj)
+	}
+
+	return title, refresh, nil
 }
 
 func (b *DashboardsAPIBuilder) UpdateAPIGroupInfo(apiGroupInfo *genericapiserver.APIGroupInfo, opts builder.APIGroupOptions) error {
