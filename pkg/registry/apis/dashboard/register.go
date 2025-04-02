@@ -291,17 +291,18 @@ func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.A
 	}
 
 	// Check for UID uniqueness
-	if accessor.GetName() != "" {
-		existing, err := b.dashStore.GetDashboard(ctx, &dashboards.GetDashboardQuery{
-			UID:   accessor.GetName(),
-			OrgID: nsInfo.OrgID,
-		})
-		if err == nil && existing != nil {
-			return dashboards.ErrDashboardWithSameUIDExists
-		} else if err != nil && !errors.Is(err, dashboards.ErrDashboardNotFound) {
-			return fmt.Errorf("error checking dashboard UID uniqueness: %w", err)
-		}
-	}
+	// Let the storage handle this.
+	// if accessor.GetName() != "" {
+	// 	existing, err := b.dashStore.GetDashboard(ctx, &dashboards.GetDashboardQuery{
+	// 		UID:   accessor.GetName(),
+	// 		OrgID: nsInfo.OrgID,
+	// 	})
+	// 	if err == nil && existing != nil {
+	// 		return dashboards.ErrDashboardWithSameUIDExists
+	// 	} else if err != nil && !errors.Is(err, dashboards.ErrDashboardNotFound) {
+	// 		return fmt.Errorf("error checking dashboard UID uniqueness: %w", err)
+	// 	}
+	// }
 
 	// Validate folder existence if specified
 	if accessor.GetFolder() != "" {

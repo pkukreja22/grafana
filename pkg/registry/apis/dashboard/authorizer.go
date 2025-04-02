@@ -20,12 +20,11 @@ func GetAuthorizer(dashboardService dashboards.DashboardService, dualWriter dual
 			// This is because we do NOT want to hit the RoleAuthorizer that would be evaluated afterwards.
 
 			// Check if we're reading from legacy dashboards and folders
+			// This authorizer is only used for mode 0 to 2. Mode 3 onwards, unified storage handles access control.
 			isReadingLegacy := dualwrite.IsReadingLegacyDashboardsAndFolders(ctx, dualWriter)
 			if !isReadingLegacy {
 				return authorizer.DecisionAllow, "relying on unified storage for access control", nil
 			}
-
-			// This authorizer is only used for mode 0 to 2. Mode 3 onwards, unified storage handles access control.
 
 			// Use the standard authorizer
 			if !attr.IsResourceRequest() {
