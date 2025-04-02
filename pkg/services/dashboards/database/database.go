@@ -402,18 +402,14 @@ func getExistingDashboardByIDOrUIDForUpdate(sess *db.Session, dash *dashboards.D
 	return isParentFolderChanged, nil
 }
 
-func saveDashboard(ctx context.Context, sess *db.Session, cmd *dashboards.SaveDashboardCommand, emitEntityEvent bool) (*dashboards.Dashboard, error) {
-	dash := cmd.GetDashboardModel()
-
-	var err error
-
+func checkSaveDashboardPermission(ctx context.Context, dash *dashboards.Dashboard) error {
 	user, err := identity.GetRequester(ctx)
 	if err == nil {
 		// Only check access if we are operating in a context that has a user session
 		var ok bool
 		guardian, err := guardian.NewByDashboard(ctx, dash, dash.OrgID, user)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		if dash.ID > 0 {
@@ -422,10 +418,20 @@ func saveDashboard(ctx context.Context, sess *db.Session, cmd *dashboards.SaveDa
 			ok, err = guardian.CanCreate(dash.FolderUID, dash.IsFolder) // vs Save
 		}
 		if err != nil {
-			return nil, err
+			return err
 		} else if !ok {
-			return nil, dashboards.ErrDashboardUpdateAccessDenied
+			return dashboards.ErrDashboardUpdateAccessDenied
 		}
+	}
+	return nil
+}
+
+func saveDashboard(ctx context.Context, sess *db.Session, cmd *dashboards.SaveDashboardCommand, emitEntityEvent bool) (*dashboards.Dashboard, error) {
+	dash := cmd.GetDashboardModel()
+
+	err := checkSaveDashboardPermission(ctx, dash)
+	if err != nil {
+		return nil, err
 	}
 
 	// we don't save FolderID in kubernetes object when saving through k8s

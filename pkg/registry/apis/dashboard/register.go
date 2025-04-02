@@ -13,7 +13,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/admission"
@@ -457,7 +456,7 @@ func (b *DashboardsAPIBuilder) validateBasicProperties(title string, accessor ut
 // validateFolderExists checks if a folder exists
 func (b *DashboardsAPIBuilder) validateFolderExists(ctx context.Context, folderUID string, orgID int64) error {
 	// Check if folder exists using the folder store
-	_, err := b.folderClient.Get(ctx, folderUID, orgID, v1.GetOptions{})
+	_, err := b.folderClient.Get(ctx, folderUID, orgID, metav1.GetOptions{})
 
 	if err != nil {
 		if errors.Is(err, dashboards.ErrFolderNotFound) {
