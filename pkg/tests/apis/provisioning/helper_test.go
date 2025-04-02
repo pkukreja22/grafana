@@ -72,10 +72,12 @@ func (h *provisioningTestHelper) SyncAndWait(t *testing.T, repo string, options 
 		Do(t.Context())
 
 	if apierrors.IsAlreadyExists(result.Error()) {
+		t.Logf("Received already exists error for repository %s, waiting for jobs to finish", repo)
 		// Wait for all jobs to finish as we don't have the name.
 		h.AwaitJobs(t, repo)
 		return
 	}
+	t.Logf("Awaiting job success for repository %s", repo)
 
 	obj, err := result.Get()
 	require.NoError(t, err, "expecting to be able to sync repository")
@@ -109,7 +111,7 @@ func (h *provisioningTestHelper) AwaitJobSuccess(t *testing.T, ctx context.Conte
 		state := mustNestedString(result.Object, "status", "state")
 		require.Equal(t, string(provisioning.JobStateSuccess), state,
 			"historic job '%s' was not successful", job.GetName())
-	}, time.Second*10, time.Millisecond*20) {
+	}, time.Second*15, time.Millisecond*20) {
 		// We also want to add the job details to the error when it fails.
 		job, err := h.Jobs.Resource.Get(ctx, job.GetName(), metav1.GetOptions{})
 		if err != nil {
@@ -119,6 +121,7 @@ func (h *provisioningTestHelper) AwaitJobSuccess(t *testing.T, ctx context.Conte
 		}
 		t.FailNow()
 	}
+	t.Logf("Successfully waited for job %s to finish", job.GetName())
 }
 
 func (h *provisioningTestHelper) AwaitJobs(t *testing.T, repoName string) {

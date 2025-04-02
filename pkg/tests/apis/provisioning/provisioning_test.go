@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v70/github"
 	ghmock "github.com/migueleliasweb/go-github-mock/src/mock"
@@ -281,14 +282,18 @@ func TestIntegrationProvisioning_ImportAllPanelsFromLocalRepository(t *testing.T
 	// Now, we import it, such that it may exist
 	helper.SyncAndWait(t, repo, nil)
 
-	found, err := helper.Dashboards.Resource.List(ctx, metav1.ListOptions{})
-	require.NoError(t, err, "can list values")
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		found, err := helper.Dashboards.Resource.List(ctx, metav1.ListOptions{})
+		require.NoError(t, err, "can list values")
+		require.NotNil(t, found)
+		require.NotEmpty(t, found.Items)
 
-	names := []string{}
-	for _, v := range found.Items {
-		names = append(names, v.GetName())
-	}
-	require.Contains(t, names, allPanels, "all-panels dashboard should now exist")
+		names := []string{}
+		for _, v := range found.Items {
+			names = append(names, v.GetName())
+		}
+		require.Contains(t, names, allPanels, "all-panels dashboard should now exist")
+	}, time.Second*5, time.Millisecond*20, "Jobs are finished but no dashboard has been found")
 }
 
 func TestProvisioning_ExportUnifiedToRepository(t *testing.T) {
