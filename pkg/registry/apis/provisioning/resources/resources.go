@@ -11,6 +11,7 @@ import (
 	"github.com/grafana/grafana/pkg/infra/slugify"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/repository"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/safepath"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -160,8 +161,14 @@ func (r *ResourcesManager) WriteResourceFromFile(ctx context.Context, path strin
 	parsed.Meta.SetUID("")             // clear identifiers
 	parsed.Meta.SetResourceVersion("") // clear identifiers
 
-	// Update will also create (for resources we care about)
 	_, err = parsed.Client.Update(ctx, parsed.Obj, metav1.UpdateOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		// Create if it doesn't already exist.
+		_, err = parsed.Client.Create(ctx, parsed.Obj, metav1.CreateOptions{})
+		if err != nil {
+			return "", parsed.GVK, fmt.Errorf("failed to create provisioned resource: %w", err)
+		}
+	}
 
 	return parsed.Obj.GetName(), parsed.GVK, err
 }

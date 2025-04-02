@@ -9,6 +9,7 @@ import (
 	"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1alpha1"
 	"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1"
 	common "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/user"
@@ -134,7 +135,22 @@ func TestDashboardAPIBuilder_Validate(t *testing.T) {
 			b := &DashboardsAPIBuilder{
 				dashboardProvisioningService: fakeService,
 			}
-			err := b.Validate(context.Background(), admission.NewAttributesRecord(
+
+			// Create a context with a requester identity
+			ctx := context.Background()
+			requester := &identity.StaticRequester{
+				Type:           "user",
+				UserID:         1,
+				UserUID:        "user:1",
+				OrgID:          1,
+				OrgRole:        identity.RoleAdmin,
+				Login:          "testuser",
+				Name:           "Test User",
+				IsGrafanaAdmin: true,
+			}
+			ctx = identity.WithRequester(ctx, requester)
+
+			err := b.Validate(ctx, admission.NewAttributesRecord(
 				tt.inputObj,
 				nil,
 				v1alpha1.DashboardResourceInfo.GroupVersionKind(),

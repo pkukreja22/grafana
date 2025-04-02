@@ -95,7 +95,7 @@ func (g *genericStrategy) WarningsOnCreate(ctx context.Context, obj runtime.Obje
 }
 
 func (g *genericStrategy) AllowCreateOnUpdate() bool {
-	return true
+	return false
 }
 
 func (g *genericStrategy) AllowUnconditionalUpdate() bool {

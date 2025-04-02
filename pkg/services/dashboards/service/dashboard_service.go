@@ -1864,9 +1864,14 @@ func (dr *DashboardServiceImpl) saveProvisionedDashboardThroughK8s(ctx context.C
 	meta.SetManagerProperties(m)
 	meta.SetSourceProperties(s)
 
-	// Update will create if not exists (upsert!)
 	out, err := dr.k8sclient.Update(ctx, obj, cmd.OrgID)
-	if err != nil {
+	if err != nil && apierrors.IsNotFound(err) {
+		// Create if it doesn't already exist.
+		out, err = dr.k8sclient.Create(ctx, obj, cmd.OrgID)
+		if err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
 	}
 
@@ -1881,9 +1886,14 @@ func (dr *DashboardServiceImpl) saveDashboardThroughK8s(ctx context.Context, cmd
 
 	dashboard.SetPluginIDMeta(obj, cmd.PluginID)
 
-	// Update will create if not exists (upsert!)
 	out, err := dr.k8sclient.Update(ctx, obj, orgID)
-	if err != nil {
+	if err != nil && apierrors.IsNotFound(err) {
+		// Create if it doesn't already exist.
+		out, err = dr.k8sclient.Create(ctx, obj, orgID)
+		if err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
 	}
 
