@@ -258,7 +258,6 @@ func (r *DualReadWriter) UpdateResource(ctx context.Context, path string, ref st
 	// Directly update the grafana database
 	// Behaves the same running sync after writing
 	if ref == "" {
-		// FIXME: we are not creating the folder path
 		// FIXME: I don't like this parsed strategy here
 		if parsed.Existing == nil {
 			parsed.Upsert, err = parsed.Client.Create(ctx, parsed.Obj, metav1.CreateOptions{})

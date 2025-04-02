@@ -18,6 +18,7 @@ import (
 	dashboard "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v0alpha1"
 	"github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
+	folderv0alpha1 "github.com/grafana/grafana/pkg/apis/folder/v0alpha1"
 	provisioning "github.com/grafana/grafana/pkg/apis/provisioning/v0alpha1"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/repository"
 )
@@ -201,6 +202,39 @@ func (r *Parser) Parse(ctx context.Context, info *repository.FileInfo, validate 
 	if parsed.Client == nil {
 		parsed.Errors = append(parsed.Errors, fmt.Errorf("unable to find client"))
 		return parsed, nil
+	}
+
+	// FIXME: This is actually not okay in a "parse" function
+	// But we need to create the folder before we can actually operate in it...
+	folderClient, _, err := r.clients.ForKind(folderv0alpha1.FolderResourceInfo.GroupVersionKind())
+	if err != nil {
+		parsed.Errors = append(parsed.Errors, err)
+		return parsed, nil
+	}
+
+	_, err = folderClient.Get(ctx, parsed.Meta.GetFolder(), metav1.GetOptions{})
+	if err != nil {
+		// TODO: Add a proper IsError check here
+		// Folder does presumably not exist, create it.
+		_, err = folderClient.Create(ctx,
+			&unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": folderv0alpha1.FolderResourceInfo.GroupVersion().String(),
+					"kind":       folderv0alpha1.FolderResourceInfo.GroupVersionKind().Kind,
+					"metadata": map[string]interface{}{
+						"name":      parsed.Meta.GetFolder(),
+						"namespace": r.repo.Namespace,
+					},
+					"spec": map[string]interface{}{
+						"title": r.repo.Title,
+					},
+				},
+			},
+			metav1.CreateOptions{})
+		if err != nil {
+			parsed.Errors = append(parsed.Errors, err)
+			return parsed, nil
+		}
 	}
 
 	// Dry run CREATE or UPDATE

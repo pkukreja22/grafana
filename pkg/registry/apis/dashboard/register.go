@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/admission"
@@ -46,11 +47,16 @@ import (
 	"github.com/grafana/grafana/pkg/services/provisioning"
 	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/search/sort"
+	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/legacysql"
 	"github.com/grafana/grafana/pkg/storage/legacysql/dualwrite"
 	"github.com/grafana/grafana/pkg/storage/unified/apistore"
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
+
+	folderv0alpha1 "github.com/grafana/grafana/pkg/apis/folder/v0alpha1"
+	"github.com/grafana/grafana/pkg/services/apiserver"
+	"github.com/grafana/grafana/pkg/services/apiserver/client"
 )
 
 var (
@@ -83,6 +89,7 @@ type DashboardsAPIBuilder struct {
 	cfg                          *setting.Cfg
 	accessClient                 types.AccessClient
 	dualWriter                   dualwrite.Service
+	folderClient                 client.K8sHandler
 
 	log log.Logger
 	reg prometheus.Registerer
@@ -106,11 +113,14 @@ func RegisterAPIService(
 	quotaService quota.Service,
 	folderStore folder.FolderStore,
 	accessClient types.AccessClient,
+	restConfigProvider apiserver.RestConfigProvider,
+	userService user.Service,
 ) *DashboardsAPIBuilder {
 	softDelete := features.IsEnabledGlobally(featuremgmt.FlagDashboardRestore)
 	dbp := legacysql.NewDatabaseProvider(sql)
 	namespacer := request.GetNamespaceMapper(cfg)
 	legacyDashboardSearcher := legacysearcher.NewDashboardSearchClient(dashStore, sorter)
+	folderClient := client.NewK8sHandler(dual, request.GetNamespaceMapper(cfg), folderv0alpha1.FolderResourceInfo.GroupVersionResource(), restConfigProvider.GetRestConfig, dashStore, userService, unified, sorter)
 	builder := &DashboardsAPIBuilder{
 		log: log.New("grafana-apiserver.dashboards"),
 
@@ -127,7 +137,7 @@ func RegisterAPIService(
 		cfg:                          cfg,
 		accessClient:                 accessClient,
 		dualWriter:                   dual,
-
+		folderClient:                 folderClient,
 		legacy: &DashboardStorage{
 			Access:           legacy.NewDashboardAccess(dbp, namespacer, dashStore, provisioning, softDelete, sorter),
 			DashboardService: &dashboardService,
@@ -208,6 +218,8 @@ func (b *DashboardsAPIBuilder) Validate(ctx context.Context, a admission.Attribu
 		return b.validateCreate(ctx, a, o)
 	case admission.Update:
 		return b.validateUpdate(ctx, a, o)
+	case admission.Connect:
+		return nil // TODO: What does this exactly mean?
 	}
 
 	return nil
@@ -444,7 +456,7 @@ func (b *DashboardsAPIBuilder) validateBasicProperties(title string, accessor ut
 // validateFolderExists checks if a folder exists
 func (b *DashboardsAPIBuilder) validateFolderExists(ctx context.Context, folderUID string, orgID int64) error {
 	// Check if folder exists using the folder store
-	_, err := b.folderStore.GetFolderByUID(ctx, orgID, folderUID)
+	_, err := b.folderClient.Get(ctx, folderUID, orgID, v1.GetOptions{})
 
 	if err != nil {
 		if errors.Is(err, dashboards.ErrFolderNotFound) {

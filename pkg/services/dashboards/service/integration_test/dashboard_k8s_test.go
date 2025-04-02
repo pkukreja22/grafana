@@ -863,7 +863,7 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 
 				specMap["refresh"] = tc.refreshValue
 
-				meta.SetSpec(specMap)
+				_ = meta.SetSpec(specMap)
 
 				dash, err := adminClient.Resource.Create(context.Background(), dashObj, v1.CreateOptions{})
 
@@ -938,7 +938,6 @@ func runDashboardValidationTests(t *testing.T, ctx TestContext) {
 			err = adminClient.Resource.Delete(context.Background(), specificUID, v1.DeleteOptions{})
 			require.NoError(t, err)
 		})
-
 	})
 }
 
@@ -1521,7 +1520,7 @@ func updateDashboard(t *testing.T, client *apis.K8sResourceClient, dashboard *un
 	specMap["title"] = newTitle
 
 	// Set the updated spec
-	meta.SetSpec(specMap)
+	_ = meta.SetSpec(specMap)
 
 	// Set message if provided
 	if updateMessage != nil {
