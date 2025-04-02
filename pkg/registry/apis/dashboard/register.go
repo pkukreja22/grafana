@@ -183,13 +183,11 @@ func (b *DashboardsAPIBuilder) GetAuthorizer() authorizer.Authorizer {
 
 // Validate validates dashboard operations for the apiserver
 func (b *DashboardsAPIBuilder) Validate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) (err error) {
-	// First validate that the namespace belongs to the requester's org
 	nsInfo, err := types.ParseNamespace(a.GetNamespace())
 	if err != nil {
 		return fmt.Errorf("failed to parse namespace: %w", err)
 	}
 
-	// Validate requester's organization context
 	id, err := identity.GetRequester(ctx)
 	if err != nil {
 		return fmt.Errorf("error getting requester: %w", err)
@@ -314,14 +312,15 @@ func (b *DashboardsAPIBuilder) validateCreate(ctx context.Context, a admission.A
 		return fmt.Errorf("error getting requester: %w", err)
 	}
 
+	internalId, err := id.GetInternalID()
+	if err != nil {
+		return fmt.Errorf("error getting internal ID: %w", err)
+	}
+
 	// Validate quota
 	params := &quota.ScopeParameters{}
 	params.OrgID = id.GetOrgID()
-	userID, err := identity.UserIdentifier(id.GetID())
-	if err != nil {
-		return fmt.Errorf("error getting user ID: %w", err)
-	}
-	params.UserID = userID
+	params.UserID = internalId
 
 	quotaReached, err := b.QuotaService.CheckQuotaReached(ctx, dashboards.QuotaTargetSrv, params)
 	if err != nil {

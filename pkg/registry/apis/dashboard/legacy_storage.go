@@ -98,6 +98,8 @@ func (s *storeWrapper) Create(ctx context.Context, obj runtime.Object, createVal
 		User:  user,
 		OrgID: user.GetOrgID(),
 	}
+
+	// Temporary approach to set default permissions until we have a proper method in place via k8s
 	(*s.DashboardService).SetDefaultPermissions(ctx, dto, legacyDashboard, false)
 
 	return obj, nil

@@ -154,7 +154,7 @@ func (c *K8sTestHelper) Shutdown() {
 }
 
 type ResourceClientArgs struct {
-	// Provider either a user or a service account token
+	// Provide either a user or a service account token
 	User                User
 	ServiceAccountToken string
 	Namespace           string
